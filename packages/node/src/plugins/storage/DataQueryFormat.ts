@@ -47,9 +47,34 @@ export const toObject = (msg: StreamMessage): any => {
     return result
 }
 
+/**
+ * Message metadata without the payload. Lets a client confirm which messages
+ * a node holds (e.g. verify a chunked upload) at a fraction of the cost of
+ * reading the content back. `size` is the binary content length, or null
+ * when the content is not binary.
+ */
+export const toMetadataObject = (msg: StreamMessage): any => {
+    let size: number | null = null
+    try {
+        const content = msg.getParsedContent()
+        if (content instanceof Uint8Array) {
+            size = content.length
+        }
+    } catch {
+        // unparsable content: report the message without a size
+    }
+    return {
+        timestamp: msg.getTimestamp(),
+        sequenceNumber: msg.getSequenceNumber(),
+        publisherId: msg.getPublisherId(),
+        size
+    }
+}
+
 const FORMATS: Record<string, Format> = {
     'object': createJsonFormat((bytes: Uint8Array) => JSON.stringify(toObject(convertBytesToStreamMessage(bytes)))),
-    'raw': createBinaryFormat(toLengthPrefixedFrame)
+    'raw': createBinaryFormat(toLengthPrefixedFrame),
+    'metadata': createJsonFormat((bytes: Uint8Array) => JSON.stringify(toMetadataObject(convertBytesToStreamMessage(bytes))))
 }
 
 export const getFormat = (id: string | undefined): Format | undefined => {

@@ -125,6 +125,17 @@ describe('dataQueryEndpoint', () => {
                     .expect(Buffer.concat(streamMessages.map(convertStreamMessageToBytes).map(toLengthPrefixedFrame)), done)
             })
 
+            it('responds with metadata format', (done) => {
+                testGetRequest('/streams/streamId/data/partitions/0/last?count=2&format=metadata')
+                    .expect('Content-Type', /json/)
+                    .expect(streamMessages.map((m) => ({
+                        timestamp: m.getTimestamp(),
+                        sequenceNumber: m.getSequenceNumber(),
+                        publisherId: m.getPublisherId(),
+                        size: null
+                    })), done)
+            })
+
             it('invokes storage#requestLast once with correct arguments', async () => {
                 await testGetRequest('/streams/streamId/data/partitions/0/last')
                 expect(storage.requestLast).toHaveBeenCalledTimes(1)
