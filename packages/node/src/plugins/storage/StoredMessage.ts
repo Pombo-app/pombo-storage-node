@@ -7,3 +7,12 @@ export interface StoredMessage {
     payload: Uint8Array
     storedAt?: number
 }
+
+/** One row of stream_data, with everything a delete needs to address it exactly. */
+export interface StoredRow extends StoredMessage {
+    bucketId: unknown
+    timestamp: number
+    sequenceNo: number
+    publisherId: string
+    msgChainId: string
+}

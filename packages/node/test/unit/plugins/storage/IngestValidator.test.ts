@@ -2,7 +2,8 @@ import { ContentType, EncryptionType, MessageID, SignatureType, StreamMessage, S
 import { randomEthereumAddress, randomUserId } from '@streamr/test-utils'
 import { EthereumAddress, MetricsContext, hexToBinary, toStreamID, utf8ToBinary } from '@streamr/utils'
 import { mock } from 'jest-mock-extended'
-import { GateInfo, GateReader, IngestValidator, parseGateAddress } from '../../../../src/plugins/storage/IngestValidator'
+import { IngestValidator } from '../../../../src/plugins/storage/IngestValidator'
+import { GateInfo, GateReader, PomboGates } from '../../../../src/plugins/storage/PomboGates'
 
 const OWNER = randomEthereumAddress()
 const MODERATOR = randomEthereumAddress()
@@ -31,6 +32,7 @@ describe('IngestValidator', () => {
 
     let client: ReturnType<typeof mock<StreamrClient>>
     let gateReader: ReturnType<typeof mock<GateReader>>
+    let gates: PomboGates
     let validator: IngestValidator
 
     const gate = (overrides: Partial<GateInfo> = {}): GateInfo => ({
@@ -48,11 +50,12 @@ describe('IngestValidator', () => {
         client.getStreamMetadata.mockResolvedValue(gatedMetadata(GATE))
         gateReader.getInfo.mockResolvedValue(gate())
         gateReader.isModerator.mockImplementation(async (_gate, user) => user === MODERATOR)
-        validator = new IngestValidator(client, new MetricsContext(), gateReader)
+        gates = new PomboGates(client, gateReader)
+        validator = new IngestValidator(client, new MetricsContext(), gates)
     })
 
     afterEach(() => {
-        validator.destroy()
+        gates.destroy()
     })
 
     describe('protocol rule', () => {
@@ -129,18 +132,6 @@ describe('IngestValidator', () => {
             await validator.validate(createStreamMessage())
             expect(client.getStreamMetadata).toHaveBeenCalledTimes(1)
             expect(gateReader.getInfo).toHaveBeenCalledTimes(1)
-        })
-    })
-
-    describe('parseGateAddress', () => {
-        it('reads the gate from the Pombo description', () => {
-            expect(parseGateAddress(gatedMetadata(GATE))).toBe(GATE)
-        })
-
-        it('ignores streams without a Pombo description', () => {
-            expect(parseGateAddress({ partitions: 1 })).toBeUndefined()
-            expect(parseGateAddress({ description: 'plain text' })).toBeUndefined()
-            expect(parseGateAddress({ description: JSON.stringify({ g: 'not-an-address' }) })).toBeUndefined()
         })
     })
 })

@@ -8,7 +8,7 @@ import { v1 as uuidv1 } from 'uuid'
 import { BatchManager } from './BatchManager'
 import { Bucket, BucketId } from './Bucket'
 import { BucketManager, BucketManagerOptions } from './BucketManager'
-import { StoredMessage } from './StoredMessage'
+import { StoredMessage, StoredRow } from './StoredMessage'
 import { MAX_SEQUENCE_NUMBER_VALUE, MIN_SEQUENCE_NUMBER_VALUE } from './dataQueryEndpoint'
 
 const logger = new Logger('Storage')
@@ -242,6 +242,34 @@ export class Storage extends EventEmitter {
         }
         return this.fetchRange(streamId, partition, fromTimestamp,
             fromSequenceNo, toTimestamp, toSequenceNo, publisherId, msgChainId)
+    }
+
+    async getMessages(streamId: string, partition: number, timestamp: number, sequenceNo: number): Promise<StoredRow[]> {
+        const buckets = await this.bucketManager.getBucketsByTimestamp(streamId, partition, timestamp, timestamp)
+        if (buckets.length === 0) {
+            return []
+        }
+        const query = 'SELECT bucket_id, ts, sequence_no, publisher_id, msg_chain_id, payload, stored_at FROM stream_data '
+            + 'WHERE stream_id = ? AND partition = ? AND bucket_id IN ? AND ts = ? AND sequence_no = ?'
+        const resultSet = await this.cassandraClient.execute(query, [streamId, partition, bucketsToIds(buckets), timestamp, sequenceNo], {
+            prepare: true
+        })
+        return resultSet.rows.map((row) => ({
+            bucketId: row.bucket_id,
+            timestamp: new Date(row.ts).getTime(),
+            sequenceNo: row.sequence_no,
+            publisherId: row.publisher_id,
+            msgChainId: row.msg_chain_id,
+            payload: row.payload,
+            storedAt: (row.stored_at !== null && row.stored_at !== undefined) ? new Date(row.stored_at).getTime() : undefined
+        }))
+    }
+
+    async deleteMessage(streamId: string, partition: number, row: StoredRow): Promise<void> {
+        const query = 'DELETE FROM stream_data '
+            + 'WHERE stream_id = ? AND partition = ? AND bucket_id = ? AND ts = ? AND sequence_no = ? AND publisher_id = ? AND msg_chain_id = ?'
+        const params = [streamId, partition, row.bucketId, row.timestamp, row.sequenceNo, row.publisherId, row.msgChainId]
+        await this.cassandraClient.execute(query, params, { prepare: true })
     }
 
     enableMetrics(metricsContext: MetricsContext): void {

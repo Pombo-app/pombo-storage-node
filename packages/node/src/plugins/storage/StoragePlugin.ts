@@ -4,6 +4,10 @@ import { Schema } from 'ajv'
 import { ApiPluginConfig, Plugin } from '../../Plugin'
 import { Storage, startCassandraStorage } from './Storage'
 import { IngestValidator } from './IngestValidator'
+import { PomboGates } from './PomboGates'
+import { SignedRequestVerifier } from './SignedRequest'
+import { createCapabilitiesEndpoint } from './capabilitiesEndpoint'
+import { PurgeAuthorizer, createPurgeEndpoint } from './purgeEndpoint'
 import { StorageConfig } from './StorageConfig'
 import PLUGIN_CONFIG_SCHEMA from './config.schema.json'
 import { createDataMetadataEndpoint } from './dataMetadataEndpoint'
@@ -48,7 +52,9 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
     private streamrClient?: StreamrClient
     private cassandra?: Storage
     private storageConfig?: StorageConfig
+    private gates?: PomboGates
     private ingestValidator?: IngestValidator
+    private signedRequestVerifier?: SignedRequestVerifier
     private messageListener?: (msg: StreamMessage) => void
 
     async start(streamrClient: StreamrClient): Promise<void> {
@@ -58,7 +64,9 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         const metricsContext = await this.streamrClient.getNode().getMetricsContext()
         this.cassandra = await this.startCassandraStorage(metricsContext)
         this.storageConfig = await this.startStorageConfig(clusterId, assignmentStream)
-        this.ingestValidator = new IngestValidator(this.streamrClient, metricsContext)
+        this.gates = new PomboGates(this.streamrClient)
+        this.ingestValidator = new IngestValidator(this.streamrClient, metricsContext, this.gates)
+        this.signedRequestVerifier = new SignedRequestVerifier()
         this.messageListener = (msg) => {
             if (isStorableMessage(msg) && this.storageConfig!.hasStreamPart(msg.getStreamPartID())) {
                 const receivedAt = Date.now()
@@ -77,12 +85,16 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         this.addHttpServerEndpoint(createDataQueryEndpoint(this.cassandra, metricsContext))
         this.addHttpServerEndpoint(createDataMetadataEndpoint(this.cassandra))
         this.addHttpServerEndpoint(createStorageConfigEndpoint(this.storageConfig))
+        const purgeAuthorizer = new PurgeAuthorizer(this.streamrClient, this.gates)
+        this.addHttpServerEndpoint(createPurgeEndpoint(this.cassandra, purgeAuthorizer, this.signedRequestVerifier))
+        this.addHttpServerEndpoint(createCapabilitiesEndpoint())
     }
 
     async stop(): Promise<void> {
         const node = this.streamrClient!.getNode()
         node.removeMessageListener(this.messageListener!)
-        this.ingestValidator!.destroy()
+        this.signedRequestVerifier!.destroy()
+        this.gates!.destroy()
         await Promise.all(Array.from(this.storageConfig!.getStreamParts()).map((streamPart) => node.leave(streamPart)))
         await this.cassandra!.close()
         this.storageConfig!.destroy()

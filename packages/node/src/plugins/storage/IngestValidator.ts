@@ -1,89 +1,17 @@
 import { StreamMessage, StreamrClient } from '@streamr/sdk'
-import { EthereumAddress, Logger, MapWithTtl, MetricsContext, RateMetric, toEthereumAddress } from '@streamr/utils'
-import { Contract } from 'ethers'
+import { EthereumAddress, Logger, MetricsContext, RateMetric } from '@streamr/utils'
+import { GateInfo, PomboGates } from './PomboGates'
 
 const logger = new Logger('IngestValidator')
 
-const POMBO_GATE_ABI = [
-    'function owner() view returns (address)',
-    'function readOnly() view returns (bool)',
-    'function wireIdentity() view returns (uint8)',
-    'function moderators(address) view returns (bool)'
-]
-const WIRE_IDENTITY_VISIBLE = 0
 const CONVERSATION_STREAM_SUFFIX = '-1'
-const CACHE_TTL = 10 * 60 * 1000
 
 // Error codes that mean "this message must not be stored". Anything else
 // (RPC failures, unknown errors) is treated as "could not verify" and the
 // message is stored: a chain outage must not erase legitimate history.
 const DEFINITIVE_REJECTIONS = new Set(['INVALID_SIGNATURE', 'MISSING_PERMISSION', 'INVALID_PARTITION', 'SIGNATURE_POLICY_VIOLATION'])
 
-export interface GateInfo {
-    address: EthereumAddress
-    owner: EthereumAddress
-    readOnly: boolean
-    visible: boolean
-}
-
-export interface GateReader {
-    getInfo: (gateAddress: EthereumAddress) => Promise<GateInfo>
-    isModerator: (gateAddress: EthereumAddress, user: EthereumAddress) => Promise<boolean>
-}
-
 export type IngestVerdict = { store: true } | { store: false, reason: string }
-
-/**
- * The Pombo gate address travels in the stream metadata: the `description`
- * field holds a JSON document whose `g` key is the gate contract.
- */
-export const parseGateAddress = (metadata: Record<string, unknown>): EthereumAddress | undefined => {
-    const description = metadata.description
-    if (typeof description !== 'string') {
-        return undefined
-    }
-    try {
-        const pombo = JSON.parse(description)
-        const gate = pombo?.g
-        if (typeof gate === 'string' && /^0x[0-9a-fA-F]{40}$/.test(gate)) {
-            return toEthereumAddress(gate)
-        }
-    } catch {
-        // not a Pombo description
-    }
-    return undefined
-}
-
-export const createEthersGateReader = (client: StreamrClient): GateReader => {
-    const contracts = new Map<EthereumAddress, Contract>()
-    const getContract = (gateAddress: EthereumAddress): Contract => {
-        let contract = contracts.get(gateAddress)
-        if (contract === undefined) {
-            contract = new Contract(gateAddress, POMBO_GATE_ABI, client.getProvider())
-            contracts.set(gateAddress, contract)
-        }
-        return contract
-    }
-    return {
-        getInfo: async (gateAddress) => {
-            const contract = getContract(gateAddress)
-            const [owner, readOnly, wireIdentity] = await Promise.all([
-                contract.owner(),
-                contract.readOnly(),
-                contract.wireIdentity()
-            ])
-            return {
-                address: gateAddress,
-                owner: toEthereumAddress(owner),
-                readOnly: Boolean(readOnly),
-                visible: Number(wireIdentity) === WIRE_IDENTITY_VISIBLE
-            }
-        },
-        isModerator: async (gateAddress, user) => {
-            return Boolean(await getContract(gateAddress).moderators(user))
-        }
-    }
-}
 
 /**
  * Decides at ingest whether a message may be stored.
@@ -100,17 +28,14 @@ export const createEthersGateReader = (client: StreamrClient): GateReader => {
 export class IngestValidator {
 
     private readonly client: StreamrClient
-    private readonly gateReader: GateReader
-    // streamId -> gate, or null for streams that are not a Pombo gated conversation
-    private readonly gateCache = new MapWithTtl<string, GateInfo | null>(() => CACHE_TTL)
-    private readonly moderatorCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
+    private readonly gates: PomboGates
     private readonly metrics = {
         rejectedMessagesPerSecond: new RateMetric()
     }
 
-    constructor(client: StreamrClient, metricsContext: MetricsContext, gateReader: GateReader = createEthersGateReader(client)) {
+    constructor(client: StreamrClient, metricsContext: MetricsContext, gates: PomboGates) {
         this.client = client
-        this.gateReader = gateReader
+        this.gates = gates
         metricsContext.addMetrics('broker.plugin.storage', this.metrics)
     }
 
@@ -131,11 +56,6 @@ export class IngestValidator {
         return this.enforceReadOnly(msg)
     }
 
-    destroy(): void {
-        this.gateCache.clear()
-        this.moderatorCache.clear()
-    }
-
     private async enforceReadOnly(msg: StreamMessage): Promise<IngestVerdict> {
         const streamId = msg.getStreamId()
         if (!streamId.endsWith(CONVERSATION_STREAM_SUFFIX)) {
@@ -143,7 +63,7 @@ export class IngestValidator {
         }
         let gate: GateInfo | null
         try {
-            gate = await this.getGate(streamId)
+            gate = await this.gates.getGate(streamId)
         } catch (err) {
             logger.warn('Could not read gate, storing message', { streamId, err })
             return { store: true }
@@ -161,7 +81,7 @@ export class IngestValidator {
             return { store: true }
         }
         try {
-            if (await this.isModerator(gate.address, signer)) {
+            if (await this.gates.isModerator(gate.address, signer)) {
                 return { store: true }
             }
         } catch (err) {
@@ -169,29 +89,6 @@ export class IngestValidator {
             return { store: true }
         }
         return this.reject(msg, 'READ_ONLY', signer)
-    }
-
-    private async getGate(streamId: string): Promise<GateInfo | null> {
-        const cached = this.gateCache.get(streamId)
-        if (cached !== undefined) {
-            return cached
-        }
-        const metadata = await this.client.getStreamMetadata(streamId)
-        const gateAddress = parseGateAddress(metadata)
-        const info = (gateAddress !== undefined) ? await this.gateReader.getInfo(gateAddress) : null
-        this.gateCache.set(streamId, info)
-        return info
-    }
-
-    private async isModerator(gateAddress: EthereumAddress, user: EthereumAddress): Promise<boolean> {
-        const key = `${gateAddress}_${user}`
-        const cached = this.moderatorCache.get(key)
-        if (cached !== undefined) {
-            return cached
-        }
-        const result = await this.gateReader.isModerator(gateAddress, user)
-        this.moderatorCache.set(key, result)
-        return result
     }
 
     private reject(msg: StreamMessage, reason: string, signer?: EthereumAddress): IngestVerdict {
