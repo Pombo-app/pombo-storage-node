@@ -8,6 +8,7 @@ import { PomboGates } from './PomboGates'
 import { SignedRequestVerifier } from './SignedRequest'
 import { createCapabilitiesEndpoint } from './capabilitiesEndpoint'
 import { PurgeAuthorizer, createPurgeEndpoint } from './purgeEndpoint'
+import { createSignedReadGuard } from './signedReads'
 import { StorageConfig } from './StorageConfig'
 import PLUGIN_CONFIG_SCHEMA from './config.schema.json'
 import { createDataMetadataEndpoint } from './dataMetadataEndpoint'
@@ -40,6 +41,9 @@ export interface StoragePluginConfig extends ApiPluginConfig {
     }
     batch: {
         logErrors: boolean
+    }
+    signedReads: {
+        enabled: boolean
     }
 }
 
@@ -82,12 +86,14 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         }
         const node = this.streamrClient.getNode()
         node.addMessageListener(this.messageListener)
-        this.addHttpServerEndpoint(createDataQueryEndpoint(this.cassandra, metricsContext))
+        const signedReadsEnabled = this.pluginConfig.signedReads.enabled
+        const readGuard = createSignedReadGuard(signedReadsEnabled, this.gates, this.signedRequestVerifier)
+        this.addHttpServerEndpoint(createDataQueryEndpoint(this.cassandra, metricsContext, [readGuard]))
         this.addHttpServerEndpoint(createDataMetadataEndpoint(this.cassandra))
         this.addHttpServerEndpoint(createStorageConfigEndpoint(this.storageConfig))
         const purgeAuthorizer = new PurgeAuthorizer(this.streamrClient, this.gates)
         this.addHttpServerEndpoint(createPurgeEndpoint(this.cassandra, purgeAuthorizer, this.signedRequestVerifier))
-        this.addHttpServerEndpoint(createCapabilitiesEndpoint())
+        this.addHttpServerEndpoint(createCapabilitiesEndpoint(signedReadsEnabled))
     }
 
     async stop(): Promise<void> {

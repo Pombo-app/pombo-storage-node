@@ -258,7 +258,7 @@ const createHandler = (storage: Storage, metrics: MetricsDefinition): RequestHan
     }
 }
 
-export const createDataQueryEndpoint = (storage: Storage, metricsContext: MetricsContext): HttpServerEndpoint => {
+export const createDataQueryEndpoint = (storage: Storage, metricsContext: MetricsContext, guards: RequestHandler[] = []): HttpServerEndpoint => {
     const metrics = {
         resendLastQueriesPerSecond: new RateMetric(),
         resendFromQueriesPerSecond: new RateMetric(),
@@ -268,6 +268,6 @@ export const createDataQueryEndpoint = (storage: Storage, metricsContext: Metric
     return {
         path: `/streams/:id/data/partitions/:partition/:resendType`,
         method: 'get',
-        requestHandlers: [createHandler(storage, metrics)]
+        requestHandlers: [...guards, createHandler(storage, metrics)]
     }
 }

@@ -6,7 +6,8 @@ const POMBO_GATE_ABI = [
     'function owner() view returns (address)',
     'function readOnly() view returns (bool)',
     'function wireIdentity() view returns (uint8)',
-    'function moderators(address) view returns (bool)'
+    'function moderators(address) view returns (bool)',
+    'function checkAccess(address) view returns (bool)'
 ]
 const WIRE_IDENTITY_VISIBLE = 0
 const CACHE_TTL = 10 * 60 * 1000
@@ -22,6 +23,8 @@ export interface GateInfo {
 export interface GateReader {
     getInfo: (gateAddress: EthereumAddress) => Promise<GateInfo>
     isModerator: (gateAddress: EthereumAddress, user: EthereumAddress) => Promise<boolean>
+    /** The gate's own access rule; rejects (reverts) when the gate token is broken */
+    checkAccess: (gateAddress: EthereumAddress, user: EthereumAddress) => Promise<boolean>
 }
 
 const parsePomboDescription = (metadata: Record<string, unknown>): Record<string, unknown> | undefined => {
@@ -86,14 +89,17 @@ export const createEthersGateReader = (client: StreamrClient): GateReader => {
         },
         isModerator: async (gateAddress, user) => {
             return Boolean(await getContract(gateAddress).moderators(user))
+        },
+        checkAccess: async (gateAddress, user) => {
+            return Boolean(await getContract(gateAddress).checkAccess(user))
         }
     }
 }
 
 /**
  * Resolves the Pombo gate behind any stream of a channel, with the chain
- * reads cached: the gate itself is immutable, and a ban or a new moderator
- * is seen within CACHE_TTL.
+ * reads cached: the gate itself is immutable, and a ban, a new moderator or
+ * an expired subscription is seen within CACHE_TTL.
  */
 export class PomboGates {
 
@@ -102,6 +108,7 @@ export class PomboGates {
     // streamId -> gate, or null for streams that do not belong to a gated channel
     private readonly gateCache = new MapWithTtl<string, GateInfo | null>(() => CACHE_TTL)
     private readonly moderatorCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
+    private readonly accessCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
 
     constructor(client: StreamrClient, gateReader: GateReader = createEthersGateReader(client)) {
         this.client = client
@@ -127,18 +134,33 @@ export class PomboGates {
     }
 
     async isModerator(gateAddress: EthereumAddress, user: EthereumAddress): Promise<boolean> {
-        const key = `${gateAddress}_${user}`
-        const cached = this.moderatorCache.get(key)
-        if (cached !== undefined) {
-            return cached
-        }
-        const result = await this.gateReader.isModerator(gateAddress, user)
-        this.moderatorCache.set(key, result)
-        return result
+        return this.cachedLookup(this.moderatorCache, gateAddress, user, () => this.gateReader.isModerator(gateAddress, user))
+    }
+
+    async hasAccess(gateAddress: EthereumAddress, user: EthereumAddress): Promise<boolean> {
+        return this.cachedLookup(this.accessCache, gateAddress, user, () => this.gateReader.checkAccess(gateAddress, user))
     }
 
     destroy(): void {
         this.gateCache.clear()
         this.moderatorCache.clear()
+        this.accessCache.clear()
+    }
+
+    // eslint-disable-next-line class-methods-use-this
+    private async cachedLookup(
+        cache: MapWithTtl<string, boolean>,
+        gateAddress: EthereumAddress,
+        user: EthereumAddress,
+        lookup: () => Promise<boolean>
+    ): Promise<boolean> {
+        const key = `${gateAddress}_${user}`
+        const cached = cache.get(key)
+        if (cached !== undefined) {
+            return cached
+        }
+        const result = await lookup()
+        cache.set(key, result)
+        return result
     }
 }
