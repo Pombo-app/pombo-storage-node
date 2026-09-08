@@ -8,12 +8,12 @@ import './setupTsyringe'
 import './utils/PatchTsyringe'
 
 import { DhtAddress } from '@streamr/dht'
-import { ProxyDirection, StreamPartDeliveryOptions } from '@streamr/trackerless-network'
+import { ProxyDirection, SignatureType, StreamPartDeliveryOptions } from '@streamr/trackerless-network'
 import {
     DEFAULT_PARTITION_COUNT, EthereumAddress, HexString, Logger, StreamID,
-    TheGraphClient, toEthereumAddress, toUserId
+    EcdsaSecp256k1Evm, TheGraphClient, toEthereumAddress, toUserId
 } from '@streamr/utils'
-import type { Overrides } from 'ethers'
+import type { Overrides, Provider } from 'ethers'
 import { EventEmitter } from 'eventemitter3'
 import merge from 'lodash/merge'
 import omit from 'lodash/omit'
@@ -42,6 +42,10 @@ import { OperatorRegistry } from './contracts/OperatorRegistry'
 import { SponsorshipFactory } from './contracts/SponsorshipFactory'
 import { StorageNodeMetadata, StorageNodeRegistry } from './contracts/StorageNodeRegistry'
 import { StreamRegistry } from './contracts/StreamRegistry'
+import { SignatureValidator } from './signature/SignatureValidator'
+import { validateStreamMessage } from './utils/validateStreamMessage'
+import { createSignaturePayload } from './signature/createSignaturePayload'
+import { createLegacySignaturePayload } from './signature/createLegacySignaturePayload'
 import { StreamStorageRegistry } from './contracts/StreamStorageRegistry'
 import { SearchStreamsPermissionFilter, toInternalSearchStreamsPermissionFilter } from './contracts/searchStreams'
 import { GroupKey } from './encryption/GroupKey'
@@ -92,6 +96,8 @@ export interface ExtraSubscribeOptions {
 
 const logger = new Logger('StreamrClient')
 
+const evmSigner = new EcdsaSecp256k1Evm()
+
 /**
  * The main API used to interact with Streamr.
  *
@@ -105,6 +111,7 @@ export class StreamrClient {
     private readonly node: NetworkNodeFacade
     private readonly rpcProviderSource: RpcProviderSource
     private readonly streamRegistry: StreamRegistry
+    private readonly signatureValidator: SignatureValidator
     private readonly streamStorageRegistry: StreamStorageRegistry
     private readonly storageNodeRegistry: StorageNodeRegistry
     private readonly operatorRegistry: OperatorRegistry
@@ -144,6 +151,7 @@ export class StreamrClient {
         this.node = container.resolve<NetworkNodeFacade>(NetworkNodeFacade)
         this.rpcProviderSource = container.resolve(RpcProviderSource)
         this.streamRegistry = container.resolve<StreamRegistry>(StreamRegistry)
+        this.signatureValidator = container.resolve<SignatureValidator>(SignatureValidator)
         this.streamStorageRegistry = container.resolve<StreamStorageRegistry>(StreamStorageRegistry)
         this.storageNodeRegistry = container.resolve<StorageNodeRegistry>(StorageNodeRegistry)
         this.operatorRegistry = container.resolve<OperatorRegistry>(OperatorRegistry)
@@ -158,6 +166,37 @@ export class StreamrClient {
         container.resolve<PublisherKeyExchange>(PublisherKeyExchange) // side effect: activates publisher key exchange
         container.resolve<MetricsPublisher>(MetricsPublisher) // side effect: activates metrics publisher
         container.resolve<SponsorshipFactory>(SponsorshipFactory) // side effect: activates sponsorship event listeners
+    }
+
+    /**
+     * Validates a message the way a subscriber would: the signature (including
+     * ERC-1271 signatures) and the publisher's PUBLISH permission on the stream.
+     * Rejects with a StreamrClientError ('INVALID_SIGNATURE', 'MISSING_PERMISSION')
+     * when the message must not be accepted. For nodes that receive messages
+     * outside the subscription pipeline, e.g. storage nodes validating at ingest.
+     */
+    async validateMessage(msg: StreamMessage): Promise<void> {
+        await validateStreamMessage(msg, this.streamRegistry, this.signatureValidator, this.config)
+    }
+
+    /**
+     * Recovers the Ethereum address that signed a message. For an ERC-1271
+     * message this is the account behind the contract signature, not the
+     * contract itself. Only EVM signature types are supported.
+     */
+    // eslint-disable-next-line class-methods-use-this
+    getMessageSigner(msg: StreamMessage): EthereumAddress {
+        const payload = (msg.signatureType === SignatureType.ECDSA_SECP256K1_LEGACY)
+            ? createLegacySignaturePayload(msg)
+            : createSignaturePayload(msg)
+        return toEthereumAddress(toUserId(evmSigner.recoverSignerUserId(msg.signature, payload)))
+    }
+
+    /**
+     * The fail-safe RPC provider the client uses for chain reads.
+     */
+    getProvider(): Provider {
+        return this.rpcProviderSource.getProvider()
     }
 
     // --------------------------------------------------------------------------------------------

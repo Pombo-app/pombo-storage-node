@@ -1,6 +1,7 @@
 import 'reflect-metadata'
 
 export { StreamrClient, type SubscribeOptions, type ExtraSubscribeOptions } from './StreamrClient'
+export { StreamrClientError, type StreamrClientErrorCode } from './StreamrClientError'
 export { Stream } from './Stream'
 export { type StreamMetadata, parseMetadata as parseStreamMetadata, getPartitionCount as getStreamPartitionCount } from './StreamMetadata'
 export type { Message, MessageMetadata, MessageSignatureType } from './Message'
