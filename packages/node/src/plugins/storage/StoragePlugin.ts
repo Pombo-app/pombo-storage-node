@@ -28,6 +28,14 @@ export interface StoragePluginConfig extends ApiPluginConfig {
         clusterSize: number
         myIndexInCluster: number
     }
+    bucket: {
+        maxBucketSize: number
+        maxBucketRecords: number
+        checkFullBucketsTimeout: number
+    }
+    batch: {
+        logErrors: boolean
+    }
 }
 
 const isStorableMessage = (msg: StreamMessage): boolean => {
@@ -81,7 +89,9 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
             username: this.pluginConfig.cassandra.username,
             password: this.pluginConfig.cassandra.password,
             opts: {
-                useTtl: false
+                useTtl: false,
+                logErrors: this.pluginConfig.batch.logErrors,
+                ...this.pluginConfig.bucket
             }
         })
         cassandraStorage.enableMetrics(metricsContext)

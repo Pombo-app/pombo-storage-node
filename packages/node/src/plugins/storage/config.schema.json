@@ -81,6 +81,45 @@
                 "myIndexInCluster": 0
             }
         },
+        "bucket": {
+            "type": "object",
+            "description": "Cassandra bucket sizing. Smaller buckets keep partitions small under sustained binary ingest.",
+            "additionalProperties": false,
+            "properties": {
+                "maxBucketSize": {
+                    "type": "integer",
+                    "description": "Bytes stored in a bucket before a new one is opened",
+                    "minimum": 1,
+                    "default": 8388608
+                },
+                "maxBucketRecords": {
+                    "type": "integer",
+                    "description": "Messages stored in a bucket before a new one is opened",
+                    "minimum": 1,
+                    "default": 500000
+                },
+                "checkFullBucketsTimeout": {
+                    "type": "integer",
+                    "description": "Interval (in milliseconds) between checks for full buckets",
+                    "minimum": 1,
+                    "default": 250
+                }
+            },
+            "default": {}
+        },
+        "batch": {
+            "type": "object",
+            "description": "Cassandra write batching",
+            "additionalProperties": false,
+            "properties": {
+                "logErrors": {
+                    "type": "boolean",
+                    "description": "Log each failed batch insert (they are retried silently otherwise)",
+                    "default": true
+                }
+            },
+            "default": {}
+        },
         "apiAuthentication": {
             "$ref": "definitions.schema.json#/definitions/apiAuthenticationOverride"
         }

@@ -21,7 +21,7 @@ export interface StartCassandraOptions {
     keyspace: string
     username?: string
     password?: string
-    opts?: Partial<BucketManagerOptions & { useTtl: boolean }>
+    opts?: StorageOptions
 }
 
 const bucketsToIds = (buckets: Bucket[]) => buckets.map((bucket: Bucket) => bucket.getId())
@@ -41,6 +41,7 @@ interface ResendDebugInfo {
 
 export type StorageOptions = Partial<BucketManagerOptions> & {
     useTtl?: boolean
+    logErrors?: boolean
     retriesIntervalMilliseconds?: number
 }
 
@@ -68,7 +69,8 @@ export class Storage extends EventEmitter {
         this.cassandraClient = cassandraClient
         this.bucketManager = new BucketManager(cassandraClient, opts)
         this.batchManager = new BatchManager(cassandraClient, {
-            useTtl: this.opts.useTtl
+            useTtl: this.opts.useTtl,
+            logErrors: this.opts.logErrors
         })
         this.pendingStores = new Map()
     }
