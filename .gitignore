@@ -6,3 +6,5 @@ lerna-debug.log
 *.heapsnapshot
 oldsrc
 .vscode
+# Pombo storage node: the operator's own config, never committed
+deploy/config/pombo-node.json

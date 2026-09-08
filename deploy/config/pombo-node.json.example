@@ -1,0 +1,49 @@
+{
+    "client": {
+        "auth": {
+            "privateKey": "0x_REPLACE_WITH_THE_NODE_PRIVATE_KEY"
+        },
+        "environment": "polygon",
+        "contracts": {
+            "rpcs": [
+                { "url": "https://polygon.drpc.org" },
+                { "url": "https://polygon-bor-rpc.publicnode.com" },
+                { "url": "https://rpc.ankr.com/polygon" }
+            ],
+            "rpcQuorum": 1
+        },
+        "cache": {
+            "maxAge": 600000
+        },
+        "network": {
+            "controlLayer": {
+                "websocketPortRange": { "min": 32200, "max": 32200 },
+                "websocketHost": "node.example.org"
+            }
+        }
+    },
+    "httpServer": {
+        "port": 8002
+    },
+    "plugins": {
+        "storage": {
+            "cassandra": {
+                "hosts": ["cassandra"],
+                "username": "",
+                "password": "",
+                "keyspace": "streamr",
+                "datacenter": "datacenter1"
+            },
+            "storageConfig": {
+                "refreshInterval": 600000
+            },
+            "cluster": {
+                "clusterSize": 1,
+                "myIndexInCluster": 0
+            },
+            "signedReads": {
+                "enabled": false
+            }
+        }
+    }
+}

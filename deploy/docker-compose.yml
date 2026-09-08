@@ -1,0 +1,59 @@
+# Pombo storage node: the node plus its Cassandra, on one machine.
+#
+#   cp config/pombo-node.json.example config/pombo-node.json   # then edit it
+#   docker compose up -d --build
+#
+# The node's HTTP API (port 8002) is bound to localhost on purpose: put a
+# reverse proxy with a real certificate in front of it (see README.md).
+# Port 32200 must be reachable from the internet for the Streamr overlay.
+
+services:
+  cassandra:
+    image: cassandra:4.1
+    restart: unless-stopped
+    environment:
+      CASSANDRA_CLUSTER_NAME: pombo-storage
+      # Cassandra defaults to a quarter of the machine's RAM; a storage node
+      # is fine with 1 GB on a small box.
+      MAX_HEAP_SIZE: 1G
+      HEAP_NEWSIZE: 256M
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' > /dev/null 2>&1"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+
+  cassandra-init:
+    image: cassandra:4.1
+    restart: "no"
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./cassandra/init.cql:/init.cql:ro
+    command: ["cqlsh", "cassandra", "-f", "/init.cql"]
+
+  node:
+    build:
+      context: ..
+      dockerfile: Dockerfile.node
+    image: pombo-app/pombo-storage-node
+    restart: unless-stopped
+    depends_on:
+      cassandra-init:
+        condition: service_completed_successfully
+    environment:
+      LOG_LEVEL: info
+      NODE_OPTIONS: --max-old-space-size=2048
+    volumes:
+      - ./config:/home/streamr/.streamr/config:ro
+    ports:
+      - "32200:32200"
+      - "127.0.0.1:8002:8002"
+    command: ["/usr/local/bin/npm", "exec", "-c", "streamr-node /home/streamr/.streamr/config/pombo-node.json"]
+
+volumes:
+  cassandra-data:
