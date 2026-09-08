@@ -25,7 +25,8 @@ function buildRecord(
         sequenceNo,
         publisherId: randomUserId(),
         msgChainId: 'msgChainId',
-        payload: Buffer.from(new Uint8Array([1, 2]))
+        payload: Buffer.from(new Uint8Array([1, 2])),
+        storedAt: Date.now()
     }
 }
 

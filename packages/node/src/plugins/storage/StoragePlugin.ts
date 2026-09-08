@@ -61,13 +61,14 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         this.ingestValidator = new IngestValidator(this.streamrClient, metricsContext)
         this.messageListener = (msg) => {
             if (isStorableMessage(msg) && this.storageConfig!.hasStreamPart(msg.getStreamPartID())) {
+                const receivedAt = Date.now()
                 this.ingestValidator!.validate(msg).then((verdict) => {
                     if (verdict.store) {
-                        this.cassandra!.store(msg)
+                        this.cassandra!.store(msg, receivedAt)
                     }
                 }, (err) => {
                     logger.warn('Ingest validation failed unexpectedly, storing message', { messageId: msg.messageId, err })
-                    this.cassandra!.store(msg)
+                    this.cassandra!.store(msg, receivedAt)
                 })
             }
         }

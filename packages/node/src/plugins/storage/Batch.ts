@@ -15,6 +15,7 @@ export interface InsertRecord {
     publisherId: UserID
     msgChainId: string
     payload: Buffer // cassandra-driver expects Buffer
+    storedAt: number
 }
 
 export class Batch extends EventEmitter {

@@ -5,12 +5,12 @@ import { Batch, BatchId, DoneCallback, InsertRecord } from './Batch'
 import { BucketId } from './Bucket'
 
 const INSERT_STATEMENT = 'INSERT INTO stream_data '
-    + '(stream_id, partition, bucket_id, ts, sequence_no, publisher_id, msg_chain_id, payload) '
-    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    + '(stream_id, partition, bucket_id, ts, sequence_no, publisher_id, msg_chain_id, payload, stored_at) '
+    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
 
 const INSERT_STATEMENT_WITH_TTL = 'INSERT INTO stream_data '
-    + '(stream_id, partition, bucket_id, ts, sequence_no, publisher_id, msg_chain_id, payload) '
-    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?) USING TTL 259200' // 3 days
+    + '(stream_id, partition, bucket_id, ts, sequence_no, publisher_id, msg_chain_id, payload, stored_at) '
+    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) USING TTL 259200' // 3 days
 
 export interface BatchManagerOptions {
     useTtl: boolean
@@ -116,6 +116,7 @@ export class BatchManager extends EventEmitter {
                         record.publisherId,
                         record.msgChainId,
                         record.payload,
+                        record.storedAt,
                     ]
                 }
             })

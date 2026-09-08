@@ -8,9 +8,21 @@ import { v1 as uuidv1 } from 'uuid'
 import { BatchManager } from './BatchManager'
 import { Bucket, BucketId } from './Bucket'
 import { BucketManager, BucketManagerOptions } from './BucketManager'
+import { StoredMessage } from './StoredMessage'
 import { MAX_SEQUENCE_NUMBER_VALUE, MIN_SEQUENCE_NUMBER_VALUE } from './dataQueryEndpoint'
 
 const logger = new Logger('Storage')
+
+export class StorageSchemaError extends Error {}
+
+// The node cannot create the column itself: the keyspace is shared by every node of a cluster.
+const assertStoredAtColumn = async (cassandraClient: Client): Promise<void> => {
+    try {
+        await cassandraClient.execute('SELECT stored_at FROM stream_data LIMIT 1')
+    } catch (err) {
+        throw new StorageSchemaError(`Table stream_data has no stored_at column. Apply cassandra/stored_at.cql first (${(err as Error).message})`)
+    }
+}
 
 const MAX_TIMESTAMP_VALUE = 8640000000000000 // https://262.ecma-international.org/5.1/#sec-15.9.1.1
 const MAX_RESEND_LAST = 10000
@@ -75,7 +87,7 @@ export class Storage extends EventEmitter {
         this.pendingStores = new Map()
     }
 
-    async store(streamMessage: StreamMessage): Promise<boolean> {
+    async store(streamMessage: StreamMessage, storedAt: number = Date.now()): Promise<boolean> {
         logger.debug('Store message', { msgId: streamMessage.messageId })
 
         const bucketId = this.bucketManager.getBucketId(streamMessage.getStreamId(), streamMessage.getStreamPartition(), streamMessage.getTimestamp())
@@ -91,7 +103,8 @@ export class Storage extends EventEmitter {
                     sequenceNo: streamMessage.getSequenceNumber(),
                     publisherId: streamMessage.getPublisherId(),
                     msgChainId: streamMessage.getMsgChainId(),
-                    payload: Buffer.from(convertStreamMessageToBytes(streamMessage))
+                    payload: Buffer.from(convertStreamMessageToBytes(streamMessage)),
+                    storedAt
                 }
 
                 this.bucketManager.incrementBucket(bucketId, record.payload.length)
@@ -111,7 +124,7 @@ export class Storage extends EventEmitter {
                 const uuid = uuidv1()
                 const timeout = setTimeout(() => {
                     this.pendingStores.delete(uuid)
-                    this.store(streamMessage).then(resolve, reject)
+                    this.store(streamMessage, storedAt).then(resolve, reject)
                 }, this.opts.retriesIntervalMilliseconds)
                 this.pendingStores.set(uuid, timeout)
             }
@@ -123,7 +136,7 @@ export class Storage extends EventEmitter {
             limit = MAX_RESEND_LAST
         }
 
-        const GET_LAST_N_MESSAGES = 'SELECT payload FROM stream_data WHERE '
+        const GET_LAST_N_MESSAGES = 'SELECT payload, stored_at FROM stream_data WHERE '
             + 'stream_id = ? AND partition = ? AND bucket_id IN ? '
             + 'ORDER BY ts DESC, sequence_no DESC '
             + 'LIMIT ?'
@@ -329,7 +342,7 @@ export class Storage extends EventEmitter {
             })
 
             const streams = queries.map((q) => {
-                const select = `SELECT payload FROM stream_data ${q.where} ALLOW FILTERING`
+                const select = `SELECT payload, stored_at FROM stream_data ${q.where} ALLOW FILTERING`
                 return this.queryWithStreamingResults(select, q.params)
             })
 
@@ -363,14 +376,17 @@ export class Storage extends EventEmitter {
         }) as Readable
     }
 
-    private parseRow(row: types.Row, debugInfo: ResendDebugInfo): StreamMessage | null {
+    private parseRow(row: types.Row, debugInfo: ResendDebugInfo): StoredMessage | null {
         if (row.payload === null) {
             logger.error('Found unexpected message with NULL payload in Cassandra', { debugInfo })
             return null
         }
 
         this.emit('read', row.payload)
-        return row.payload
+        return {
+            payload: row.payload,
+            storedAt: (row.stored_at !== null && row.stored_at !== undefined) ? new Date(row.stored_at).getTime() : undefined
+        }
     }
 
     private createResultStream(debugInfo: ResendDebugInfo) {
@@ -564,8 +580,12 @@ export const startCassandraStorage = async ({
     while (retryCount > 0) {
         try {
             await cassandraClient.connect().catch((err) => { throw err })
+            await assertStoredAtColumn(cassandraClient)
             return new Storage(cassandraClient, opts ?? {})
         } catch (err) {
+            if (err instanceof StorageSchemaError) {
+                throw err
+            }
             // eslint-disable-next-line no-console
             console.log('Cassandra not responding yet...')
             retryCount -= 1

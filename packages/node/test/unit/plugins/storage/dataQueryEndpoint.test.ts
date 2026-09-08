@@ -14,8 +14,8 @@ import {
 
 const PUBLISHER_ID = randomUserId()
 
-const createOutputStream = (msg: StreamMessage[]): Readable => {
-    return toReadableStream(...msg.map(convertStreamMessageToBytes))
+const createOutputStream = (msg: StreamMessage[], storedAt?: number): Readable => {
+    return toReadableStream(...msg.map((m) => ({ payload: convertStreamMessageToBytes(m), storedAt })))
 }
 
 describe('dataQueryEndpoint', () => {
@@ -123,6 +123,24 @@ describe('dataQueryEndpoint', () => {
                 testGetRequest('/streams/streamId/data/partitions/0/last?count=2&format=raw')
                     .expect('Content-Type', 'application/octet-stream')
                     .expect(Buffer.concat(streamMessages.map(convertStreamMessageToBytes).map(toLengthPrefixedFrame)), done)
+            })
+
+            it('includes storedAt when the node recorded it', (done) => {
+                storage.requestLast = jest.fn().mockReturnValue(createOutputStream(streamMessages, 1700000000000))
+                testGetRequest('/streams/streamId/data/partitions/0/last?count=2')
+                    .expect(streamMessages.map((m) => ({ ...toObject(m), storedAt: 1700000000000 })), done)
+            })
+
+            it('includes storedAt in the metadata format when the node recorded it', (done) => {
+                storage.requestLast = jest.fn().mockReturnValue(createOutputStream(streamMessages, 1700000000000))
+                testGetRequest('/streams/streamId/data/partitions/0/last?count=2&format=metadata')
+                    .expect(streamMessages.map((m) => ({
+                        timestamp: m.getTimestamp(),
+                        sequenceNumber: m.getSequenceNumber(),
+                        publisherId: m.getPublisherId(),
+                        size: null,
+                        storedAt: 1700000000000
+                    })), done)
             })
 
             it('responds with metadata format', (done) => {

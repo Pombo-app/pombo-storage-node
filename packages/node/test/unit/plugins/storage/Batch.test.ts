@@ -9,7 +9,8 @@ const record: InsertRecord = {
     sequenceNo: 123,
     publisherId: randomUserId(),
     msgChainId: 'msgChainId',
-    payload: Buffer.from(new Uint8Array([1, 2, 3])) // len = 3
+    payload: Buffer.from(new Uint8Array([1, 2, 3])), // len = 3
+    storedAt: 456
 }
 
 describe('Batch', () => {

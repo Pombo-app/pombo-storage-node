@@ -5,6 +5,7 @@ import { Request, RequestHandler, Response } from 'express'
 import { isValidUserId, Logger, MetricsContext, MetricsDefinition, RateMetric, toUserId } from '@streamr/utils'
 import { Readable, Transform, pipeline } from 'stream'
 import { Storage } from './Storage'
+import { StoredMessage } from './StoredMessage'
 import { Format, getFormat } from './DataQueryFormat'
 import { HttpServerEndpoint } from '../../Plugin'
 
@@ -26,7 +27,7 @@ class ResponseTransform extends Transform {
         this.format = format
     }
 
-    override _transform(input: Uint8Array, _encoding: string, done: () => void) {
+    override _transform(input: StoredMessage, _encoding: string, done: () => void) {
         if (this.firstMessage) {
             this.firstMessage = false
             if (this.format.header !== undefined) {

@@ -13,6 +13,7 @@ import { randomFillSync } from 'crypto'
 import { Readable } from 'stream'
 import toArray from 'stream-to-array'
 import { Storage, startCassandraStorage } from '../../../../src/plugins/storage/Storage'
+import { StoredMessage } from '../../../../src/plugins/storage/StoredMessage'
 import { STREAMR_DOCKER_DEV_HOST } from '../../../utils'
 import { randomUserId } from '@streamr/test-utils'
 
@@ -105,8 +106,8 @@ async function storeMockMessages({
 }
 
 async function readStreamToEnd(streamingResults: Readable): Promise<StreamMessage[]> {
-    const messages: Uint8Array[] = await toArray(streamingResults)
-    return messages.map(convertBytesToStreamMessage)
+    const messages: StoredMessage[] = await toArray(streamingResults)
+    return messages.map((m) => convertBytesToStreamMessage(m.payload))
 }
 
 describe('Storage', () => {

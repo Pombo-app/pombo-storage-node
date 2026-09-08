@@ -4,6 +4,7 @@ import { UserID, hexToBinary, toStreamID, utf8ToBinary, until, waitForEvent } fr
 import { Client } from 'cassandra-driver'
 import { PassThrough, Readable } from 'stream'
 import { Storage, startCassandraStorage } from '../../../../src/plugins/storage/Storage'
+import { StoredMessage } from '../../../../src/plugins/storage/StoredMessage'
 import { STREAMR_DOCKER_DEV_HOST } from '../../../utils'
 
 const contactPoints = [STREAMR_DOCKER_DEV_HOST]
@@ -33,8 +34,8 @@ const REQUEST_TYPE_FROM = 'requestFrom'
 const REQUEST_TYPE_RANGE = 'requestRange'
 
 const streamToContentValues = async (resultStream: Readable) => {
-    const messages: Uint8Array[] = await waitForStreamToEnd(resultStream) as Uint8Array[]
-    return messages.map(convertBytesToStreamMessage).map((message) => (message.getParsedContent() as any).value)
+    const messages: StoredMessage[] = await waitForStreamToEnd(resultStream) as StoredMessage[]
+    return messages.map((m) => convertBytesToStreamMessage(m.payload)).map((message) => (message.getParsedContent() as any).value)
 }
 
 class ProxyClient {
