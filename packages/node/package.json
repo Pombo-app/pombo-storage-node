@@ -63,6 +63,7 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "jest-mock-extended": "^4.0.0",
     "@inquirer/testing": "^2.1.51",
     "@streamr/network-contracts": "^9.1.0",
     "@streamr/test-utils": "103.3.1",

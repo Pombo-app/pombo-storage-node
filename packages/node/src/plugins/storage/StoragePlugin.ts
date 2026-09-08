@@ -3,6 +3,7 @@ import { EthereumAddress, Logger, MetricsContext, executeSafePromise, toEthereum
 import { Schema } from 'ajv'
 import { ApiPluginConfig, Plugin } from '../../Plugin'
 import { Storage, startCassandraStorage } from './Storage'
+import { IngestValidator } from './IngestValidator'
 import { StorageConfig } from './StorageConfig'
 import PLUGIN_CONFIG_SCHEMA from './config.schema.json'
 import { createDataMetadataEndpoint } from './dataMetadataEndpoint'
@@ -47,6 +48,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
     private streamrClient?: StreamrClient
     private cassandra?: Storage
     private storageConfig?: StorageConfig
+    private ingestValidator?: IngestValidator
     private messageListener?: (msg: StreamMessage) => void
 
     async start(streamrClient: StreamrClient): Promise<void> {
@@ -56,9 +58,17 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         const metricsContext = await this.streamrClient.getNode().getMetricsContext()
         this.cassandra = await this.startCassandraStorage(metricsContext)
         this.storageConfig = await this.startStorageConfig(clusterId, assignmentStream)
+        this.ingestValidator = new IngestValidator(this.streamrClient, metricsContext)
         this.messageListener = (msg) => {
             if (isStorableMessage(msg) && this.storageConfig!.hasStreamPart(msg.getStreamPartID())) {
-                this.cassandra!.store(msg)
+                this.ingestValidator!.validate(msg).then((verdict) => {
+                    if (verdict.store) {
+                        this.cassandra!.store(msg)
+                    }
+                }, (err) => {
+                    logger.warn('Ingest validation failed unexpectedly, storing message', { messageId: msg.messageId, err })
+                    this.cassandra!.store(msg)
+                })
             }
         }
         const node = this.streamrClient.getNode()
@@ -71,6 +81,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
     async stop(): Promise<void> {
         const node = this.streamrClient!.getNode()
         node.removeMessageListener(this.messageListener!)
+        this.ingestValidator!.destroy()
         await Promise.all(Array.from(this.storageConfig!.getStreamParts()).map((streamPart) => node.leave(streamPart)))
         await this.cassandra!.close()
         this.storageConfig!.destroy()
