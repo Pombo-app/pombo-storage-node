@@ -10,6 +10,7 @@
   "bin": {
     "streamr-node": "dist/bin/streamr-node.js",
     "streamr-node-init": "dist/bin/streamr-node-init.js",
+    "streamr-storage-node-register": "dist/bin/streamr-storage-node-register.js",
     "delete-expired-data": "dist/bin/delete-expired-data.js",
     "entry-point": "dist/bin/entry-point.js"
   },

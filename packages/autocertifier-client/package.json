@@ -53,5 +53,8 @@
     "rollup": "^4.55.1",
     "rollup-plugin-dts": "^6.3.0",
     "tsx": "^4.21.0"
+  },
+  "config": {
+    "protocVersion": "36.1"
   }
 }
