@@ -20,6 +20,14 @@ What the node adds on top of a Streamr storage node is described in
 
 ## 1. Configure
 
+Either run the wizard, which asks the questions and writes the file:
+
+```
+docker compose run --rm node streamr-node-init
+```
+
+and point it at `config/pombo-node.json`, or copy and edit the example:
+
 ```
 cd deploy
 cp config/pombo-node.json.example config/pombo-node.json
@@ -72,16 +80,18 @@ which answers `{"name":"pombo-storage-node","features":[...]}`.
 ## 4. Register the node
 
 Streamr streams are assigned to storage nodes by address, and clients find
-a node's HTTP endpoint through the metadata registered on-chain. Register
-your public URL once (this is the transaction that costs POL):
+a node's HTTP endpoint through the metadata registered on-chain. A fresh
+node also needs its assignment stream created before it can start. One
+command does both, reading the node key from the config (this is the
+transaction that costs POL):
 
 ```
-npx -p @streamr/cli-tools streamr storage-node register https://node.example.org --private-key 0x... --env polygon
+docker compose run --rm node streamr-storage-node-register https://node.example.org --config /home/streamr/.streamr/config/pombo-node.json
 ```
 
-Several URLs can be registered, comma-separated, if you serve the same
-Cassandra from more than one hostname. Show what is registered with
-`streamr storage-node show <address> --env polygon`.
+Register several URLs at once, comma-separated, if you serve the same
+Cassandra from more than one hostname; the clients fail over between them,
+which is cheap resistance to one endpoint being blocked.
 
 From then on, a Pombo channel owner who picks your node's address when
 creating a channel gets its history stored here.
