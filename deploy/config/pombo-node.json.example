@@ -42,7 +42,7 @@
                 "myIndexInCluster": 0
             },
             "signedReads": {
-                "enabled": false
+                "enabled": true
             }
         }
     }

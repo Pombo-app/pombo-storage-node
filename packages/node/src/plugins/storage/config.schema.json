@@ -122,12 +122,12 @@
         },
         "signedReads": {
             "type": "object",
-            "description": "Require a signed request to read the streams of a gated Pombo channel (all but the admin stream). Enable once the clients sign their reads.",
+            "description": "Require a signed request to read the streams of a gated Pombo channel (all but the admin stream).",
             "additionalProperties": false,
             "properties": {
                 "enabled": {
                     "type": "boolean",
-                    "default": false
+                    "default": true
                 }
             },
             "default": {}

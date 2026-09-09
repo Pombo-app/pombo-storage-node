@@ -33,8 +33,8 @@ Edit `config/pombo-node.json`:
   identity; channel owners will assign channels to that address.
 - `client.network.controlLayer.websocketHost`: the public hostname or IP
   the overlay can reach you at on port 32200.
-- Leave `plugins.storage.signedReads.enabled` at `false` until the Pombo
-  clients sign their reads (POMBO.md explains what it does).
+- `plugins.storage.signedReads.enabled` is on: gated channels are only
+  readable with a signed request (POMBO.md explains what it does).
 
 ## 2. Start
 

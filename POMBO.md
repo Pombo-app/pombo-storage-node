@@ -71,10 +71,10 @@ At most 100 targets. The response lists each target with `deleted`,
 Other storage nodes of the same channel keep their copy: this removes the
 message from this node, not from the network.
 
-### Signed reads (opt-in)
+### Signed reads
 
-With `plugins.storage.signedReads.enabled: true`, reading the streams of a
-gated channel requires a signed request, and the signer must have access
+Reading the streams of a gated channel requires a signed request
+(`plugins.storage.signedReads.enabled`, on by default), and the signer must have access
 to the channel right now (owner, moderator, or accepted by the gate's
 `checkAccess`). The admin stream (`-3`) stays open: channel previews and
 the entry screen of non-members are served from it. Streams outside
@@ -84,13 +84,13 @@ node answers 503 rather than serve the data.
 Headers: `x-pombo-user`, `x-pombo-issued-at`, `x-pombo-nonce`,
 `x-pombo-signature`.
 
-Leave it disabled until the clients you serve sign their reads; enabling
-it first cuts every gated channel's history for everyone.
+Clients that do not sign their reads cannot read gated channels from a
+node with this enabled; disable it only to serve such clients.
 
 ### `GET /capabilities`
 
 ```json
-{ "name": "pombo-storage-node", "features": ["metadata", "storedAt", "purge"] }
+{ "name": "pombo-storage-node", "features": ["metadata", "storedAt", "purge", "signedReads"] }
 ```
 
 `signedReads` appears in the list only while it is enabled.
@@ -129,7 +129,7 @@ Storage plugin keys added to the upstream ones:
 | `bucket.maxBucketRecords` | 500000 | messages per bucket |
 | `bucket.checkFullBucketsTimeout` | 250 | ms between checks for full buckets |
 | `batch.logErrors` | true | log failed batch inserts (upstream retries them silently) |
-| `signedReads.enabled` | false | require signed reads on gated channels |
+| `signedReads.enabled` | true | require signed reads on gated channels |
 
 `client.cache.maxAge` in the node config governs how long permission
 lookups are cached; the example config sets 10 minutes so a revoked
