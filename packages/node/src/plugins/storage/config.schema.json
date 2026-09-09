@@ -132,6 +132,20 @@
             },
             "default": {}
         },
+        "retention": {
+            "type": "object",
+            "description": "Automatic retention: delete stored data past each stream's storageDays, with no external process. In a cluster it runs only on the node with index 0.",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": { "type": "boolean", "default": true },
+                "intervalHours": { "type": "number", "minimum": 1, "default": 6 },
+                "graceDays": { "type": "number", "minimum": 0, "default": 7 },
+                "abortFractionPercent": { "type": "number", "minimum": 1, "maximum": 100, "default": 30 },
+                "bucketDeleteLimit": { "type": "integer", "minimum": 1, "default": 100000 },
+                "rowDeleteLimit": { "type": "integer", "minimum": 1, "default": 200000 }
+            },
+            "default": {}
+        },
         "apiAuthentication": {
             "$ref": "definitions.schema.json#/definitions/apiAuthenticationOverride"
         }

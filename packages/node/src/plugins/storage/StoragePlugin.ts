@@ -6,6 +6,7 @@ import { Storage, startCassandraStorage } from './Storage'
 import { IngestValidator } from './IngestValidator'
 import { PomboGates } from './PomboGates'
 import { SignedRequestVerifier } from './SignedRequest'
+import { RetentionScheduler } from './RetentionScheduler'
 import { createCapabilitiesEndpoint } from './capabilitiesEndpoint'
 import { PurgeAuthorizer, createPurgeEndpoint } from './purgeEndpoint'
 import { createSignedReadGuard } from './signedReads'
@@ -45,6 +46,14 @@ export interface StoragePluginConfig extends ApiPluginConfig {
     signedReads: {
         enabled: boolean
     }
+    retention: {
+        enabled: boolean
+        intervalHours: number
+        graceDays: number
+        abortFractionPercent: number
+        bucketDeleteLimit: number
+        rowDeleteLimit: number
+    }
 }
 
 const isStorableMessage = (msg: StreamMessage): boolean => {
@@ -59,6 +68,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
     private gates?: PomboGates
     private ingestValidator?: IngestValidator
     private signedRequestVerifier?: SignedRequestVerifier
+    private retentionScheduler?: RetentionScheduler
     private messageListener?: (msg: StreamMessage) => void
 
     async start(streamrClient: StreamrClient): Promise<void> {
@@ -94,11 +104,23 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         const purgeAuthorizer = new PurgeAuthorizer(this.streamrClient, this.gates)
         this.addHttpServerEndpoint(createPurgeEndpoint(this.cassandra, purgeAuthorizer, this.signedRequestVerifier))
         this.addHttpServerEndpoint(createCapabilitiesEndpoint(signedReadsEnabled))
+
+        // In a cluster the deletes replicate through Cassandra, so retention runs on one node only.
+        if (this.pluginConfig.retention.enabled && this.pluginConfig.cluster.myIndexInCluster === 0) {
+            this.retentionScheduler = new RetentionScheduler(
+                this.streamrClient,
+                this.pluginConfig.cassandra,
+                this.pluginConfig.retention,
+                this.brokerConfig.httpServer.port
+            )
+            this.retentionScheduler.start()
+        }
     }
 
     async stop(): Promise<void> {
         const node = this.streamrClient!.getNode()
         node.removeMessageListener(this.messageListener!)
+        await this.retentionScheduler?.destroy()
         this.signedRequestVerifier!.destroy()
         this.gates!.destroy()
         await Promise.all(Array.from(this.storageConfig!.getStreamParts()).map((streamPart) => node.leave(streamPart)))

@@ -87,6 +87,27 @@ Headers: `x-pombo-user`, `x-pombo-issued-at`, `x-pombo-nonce`,
 Clients that do not sign their reads cannot read gated channels from a
 node with this enabled; disable it only to serve such clients.
 
+### Retention (automatic, no external process)
+
+A vanilla storage node keeps data forever unless an external command prunes
+it. This node enforces retention itself, on a timer, in three phases:
+
+1. **bucket retention:** whole buckets whose newest message is past the
+   stream's `storageDays` (the upstream retention command);
+2. **row sweep:** individual messages older than `storageDays` that are stuck
+   in buckets which keep receiving writes, so phase 1 never closes them;
+3. **orphan sweep:** data of streams deleted on-chain, which the first two
+   phases skip because they read `storageDays` from the registry.
+
+The orphan sweep is destructive and depends on the chain, so it is guarded:
+it deletes only when the registry reports the stream as not found, aborts the
+phase if any stream errors for another reason (an unstable RPC looks like a
+deletion otherwise) or if a suspiciously large fraction of streams look
+deleted, and holds a grace period before removing anything.
+
+In a cluster the deletes replicate through Cassandra, so retention runs on
+**one node only** — the node with `myIndexInCluster: 0`.
+
 ### `GET /capabilities`
 
 ```json
@@ -130,6 +151,9 @@ Storage plugin keys added to the upstream ones:
 | `bucket.checkFullBucketsTimeout` | 250 | ms between checks for full buckets |
 | `batch.logErrors` | true | log failed batch inserts (upstream retries them silently) |
 | `signedReads.enabled` | true | require signed reads on gated channels |
+| `retention.enabled` | true | prune stored data past each stream's storageDays (runs on cluster node 0) |
+| `retention.intervalHours` | 6 | how often retention runs |
+| `retention.graceDays` | 7 | hold before deleting an on-chain-deleted stream's data |
 
 `client.cache.maxAge` in the node config governs how long permission
 lookups are cached; the example config sets 10 minutes so a revoked
