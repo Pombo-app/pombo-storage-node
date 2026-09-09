@@ -20,6 +20,24 @@ CONFIG_IN_CONTAINER="/home/streamr/.streamr/config/pombo-node.json"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ask() { local prompt="$1" default="${2:-}" reply; read -rp "$prompt " reply; echo "${reply:-$default}"; }
+# Re-prompt until the answer is valid instead of aborting the install. The prompt
+# and any error go to stderr (read -p already does), so $(...) captures only the value.
+ask_int() {
+    local prompt="$1" min="$2" max="$3" default="${4:-}" reply
+    while true; do
+        read -rp "$prompt " reply; reply="${reply:-$default}"
+        if [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= min && reply <= max )); then echo "$reply"; return 0; fi
+        echo "Please enter a whole number between $min and $max." >&2
+    done
+}
+ask_ip() {
+    local prompt="$1" default="${2:-}" reply
+    while true; do
+        read -rp "$prompt " reply; reply="${reply:-$default}"
+        if [[ "$reply" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "$reply"; return 0; fi
+        echo "Please enter a valid IPv4 address (e.g. 203.0.113.10)." >&2
+    done
+}
 
 command -v docker >/dev/null || { echo "Docker is not installed. See HOW_TO_INSTALL.md step 1."; exit 1; }
 # Fall back to sudo when the user is not yet in the docker group (fresh install, group not applied to this shell).
@@ -31,12 +49,15 @@ say "Pombo storage node installer"
 
 # --- the key ---
 if [[ "$(ask 'Do you already have a node private key? [y/N]' n)" =~ ^[Yy] ]]; then
-    read -rsp "Paste the private key (0x + 64 hex): " PRIVATE_KEY; echo
+    while true; do
+        read -rsp "Paste the private key (0x + 64 hex): " PRIVATE_KEY; echo
+        [[ "$PRIVATE_KEY" =~ ^0x[0-9a-fA-F]{64}$ ]] && break
+        echo "That is not a valid private key (need 0x followed by 64 hex characters). Try again."
+    done
 else
     PRIVATE_KEY="0x$(openssl rand -hex 32)"
     say "Generated a new private key for this node. It is written into the config; back it up."
 fi
-[[ "$PRIVATE_KEY" =~ ^0x[0-9a-fA-F]{64}$ ]] || { echo "That is not a valid private key (need 0x followed by 64 hex characters)."; exit 1; }
 
 # --- the hostname ---
 say "The Pombo web app only reads from an https:// endpoint on a real hostname."
@@ -60,18 +81,19 @@ SEED_IP=""
 THIS_PUBLIC_IP=""
 if [[ "$(ask 'Is this node part of a MULTI-MACHINE cluster? [y/N]' n)" =~ ^[Yy] ]]; then
     CLUSTER=true
-    CLUSTER_SIZE="$(ask 'How many nodes in the cluster (total machines)?' 2)"
-    [[ "$CLUSTER_SIZE" =~ ^[0-9]+$ && "$CLUSTER_SIZE" -ge 2 ]] || { echo "Cluster size must be a whole number >= 2."; exit 1; }
+    CLUSTER_SIZE="$(ask_int 'How many nodes in the cluster (total machines)?' 2 64 2)"
     if [[ "$(ask 'Is this the FIRST node (the seed, index 0)? [Y/n]' y)" =~ ^[Nn] ]]; then
         IS_SEED=false
-        NODE_INDEX="$(ask "This node's index (1..$((CLUSTER_SIZE-1))):")"
-        [[ "$NODE_INDEX" =~ ^[0-9]+$ && "$NODE_INDEX" -ge 1 && "$NODE_INDEX" -lt "$CLUSTER_SIZE" ]] || { echo "Index must be a whole number between 1 and $((CLUSTER_SIZE-1))."; exit 1; }
-        SEED_IP="$(ask 'Public IP of the first node (the Cassandra seed):')"
-        [[ "$SEED_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "The first node's public IP is required for a joining node."; exit 1; }
+        if (( CLUSTER_SIZE == 2 )); then
+            NODE_INDEX=1
+            say "A 2-node cluster has one joining node, so this node's index is 1."
+        else
+            NODE_INDEX="$(ask_int "This node's index (1..$((CLUSTER_SIZE-1))):" 1 "$((CLUSTER_SIZE-1))")"
+        fi
+        SEED_IP="$(ask_ip 'Public IP of the first node (the Cassandra seed):')"
     fi
     DETECTED_IP="$(curl -fsSL https://api.ipify.org 2>/dev/null || true)"
-    THIS_PUBLIC_IP="$(ask "This machine's public IP:" "$DETECTED_IP")"
-    [[ "$THIS_PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "This machine's public IP is required (Cassandra broadcasts it to the peers)."; exit 1; }
+    THIS_PUBLIC_IP="$(ask_ip "This machine's public IP:" "$DETECTED_IP")"
     [[ "$IS_SEED" == true ]] && SEED_IP="$THIS_PUBLIC_IP"
 fi
 
