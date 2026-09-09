@@ -31,7 +31,23 @@ On a fresh Debian/Ubuntu machine:
 ```bash
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker "$USER"
-# log out and back in so the group applies, then check:
+```
+
+On Oracle Linux / RHEL / Rocky / Alma (the `get.docker.com` script does not
+support them), use the Docker repository instead:
+
+```bash
+sudo dnf -y install dnf-plugins-core
+sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+sudo dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+# if dnf reports a conflict with runc/containerd, repeat the install with --allowerasing
+```
+
+Then log out and back in so the group applies, and check:
+
+```bash
 docker version
 docker compose version
 ```
