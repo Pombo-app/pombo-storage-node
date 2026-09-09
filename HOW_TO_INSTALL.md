@@ -54,6 +54,10 @@ docker compose version
 
 ## 2. Get the node
 
+Install git if the machine does not have it (`git --version` to check; on
+Oracle Linux / RHEL: `sudo dnf -y install git`, on Debian/Ubuntu:
+`sudo apt-get update && sudo apt-get -y install git`), then:
+
 ```bash
 git clone https://github.com/Pombo-app/pombo-storage-node.git
 cd pombo-storage-node/deploy
