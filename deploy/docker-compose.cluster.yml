@@ -9,6 +9,12 @@
 # authentication in this setup, so the firewall MUST allow them only from the
 # other node's IP (a /32 rule per peer), never from 0.0.0.0/0.
 services:
+  # In a cluster the replicated keyspace is created once, on the seed, with
+  # init-cluster.cql; the single-node auto-init (init.cql, SimpleStrategy) would
+  # collide with it, so it is turned into a no-op here.
+  cassandra-init:
+    command: ["bash", "-c", "true"]
+
   cassandra:
     environment:
       CASSANDRA_CLUSTER_NAME: pombo-storage

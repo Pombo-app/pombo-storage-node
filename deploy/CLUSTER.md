@@ -4,6 +4,12 @@ Several storage nodes that split the write load and replicate each other's
 data, so any node can serve any read. For a single node, see
 [HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md).
 
+The quick way is the installer: run it on each machine and answer yes to the
+multi-machine cluster question (it asks the cluster size, whether this is the
+first node, the seed IP, and this machine's IP). This page is the same procedure
+by hand, for troubleshooting or a custom setup. Either way you must still open
+the firewall between the machines (below), which the installer cannot do.
+
 ## How it works
 
 - **One cluster key**, the same private key on every node. Its address is the
