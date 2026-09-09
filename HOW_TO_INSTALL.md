@@ -243,3 +243,18 @@ schema to adapt.
 - **`docker compose up --build` fails to build:** make sure you cloned the
   whole repository and have a recent Docker; the image compiles the node from
   source and needs network access during the build.
+
+## Prebuilt image (skip the ~10-minute build)
+
+Instead of building the node from source you can pull the published image,
+once it is public. The compose override `deploy/docker-compose.image.yml`
+repoints the node service at it:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.image.yml pull
+docker compose -f docker-compose.yml -f docker-compose.image.yml up -d
+```
+
+The image is `ghcr.io/pombo-app/pombo-storage-node`, built and pushed by the
+repository's `docker image` workflow on each version tag. Building from source
+(the rest of this guide) stays available and produces the same node.
