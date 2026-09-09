@@ -110,35 +110,51 @@ Edit two fields:
 Leave `plugins.storage.signedReads.enabled` at `true`: gated channels are
 only readable with a signed request, which is what the Pombo clients do.
 
-## 4. Start the node and its database
+## 4. Find the node's address and fund it
+
+The address is derived from the key. Build the image and read the address
+without starting the node:
 
 ```bash
-docker compose up -d --build
+docker compose build node
+docker compose run --rm --no-deps node \
+  node dist/bin/streamr-storage-node-register.js --print-address \
+  --config /home/streamr/.streamr/config/pombo-node.json
 ```
 
-The first start builds the node image from source (several minutes), starts
-Cassandra, and creates the schema. Follow it with:
+Send a small amount of POL (about 1 POL is plenty) to that address from any
+wallet. It pays for creating the node's assignment stream and registering it.
+
+## 5. Prepare the node on-chain
+
+This creates the node's assignment stream and publishes its public URL so
+clients can find it. The node cannot start until the assignment stream exists,
+so this comes before bring-up. It reads the key from the config and spends the
+POL you just sent:
 
 ```bash
+docker compose run --rm --no-deps node \
+  node dist/bin/streamr-storage-node-register.js https://node.example.org \
+  --config /home/streamr/.streamr/config/pombo-node.json
+```
+
+You can register several URLs at once, comma-separated, if you serve the same
+node at more than one hostname; the clients fail over between them.
+
+## 6. Start the node and its database
+
+```bash
+docker compose up -d
 docker compose logs -f node
 ```
 
-You are ready when you see `Started HTTP server on port 8002` and a line
-naming the node. The API is bound to `127.0.0.1:8002` on purpose; the next
-step puts HTTPS in front of it.
+The node connects to Cassandra and the network, then logs `Node address` with
+your address. The API is bound to `127.0.0.1:8002` on purpose; the next step
+puts HTTPS in front of it. If it logs `STREAM_NOT_FOUND` for `/assignments`
+for a minute, it is waiting for the assignment stream you just created to be
+indexed, and recovers on its own.
 
-Find the node's address (you will fund and register it):
-
-```bash
-docker compose logs node | grep "Node address"
-```
-
-## 5. Fund the node's address
-
-Send a small amount of POL (about 1 POL is plenty) to the node address from
-any wallet. This pays for the one registration transaction.
-
-## 6. Put HTTPS in front
+## 7. Put HTTPS in front
 
 Set your domain and start Caddy, which obtains and renews the certificate for
 you:
@@ -157,21 +173,6 @@ curl https://node.example.org/capabilities
 
 It answers `{"name":"pombo-storage-node","features":[...]}`. If the
 certificate is still being issued, wait a minute and retry.
-
-## 7. Register the node on-chain
-
-This creates the node's assignment stream (needed once before it can serve a
-channel) and publishes its public URL so clients can find it. It reads the
-node key from the config, and is the transaction that spends POL:
-
-```bash
-docker compose run --rm node \
-  node dist/bin/streamr-storage-node-register.js https://node.example.org \
-  --config /home/streamr/.streamr/config/pombo-node.json
-```
-
-You can register several URLs at once, comma-separated, if you serve the same
-node at more than one hostname; the clients fail over between them.
 
 The node is now installed. A Pombo channel owner who picks your node's
 address when creating a channel gets its history stored here.

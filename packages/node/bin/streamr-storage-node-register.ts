@@ -11,13 +11,18 @@ program
         'Prepare a storage node: create its assignment stream if missing and register its public URL(s). '
         + 'The node key is read from the config file.'
     )
-    .arguments('<urls>')
+    .arguments('[urls]')
     .option('-c, --config <file>', 'node config file the key is read from')
-    .action(async (urls: string, options: { config?: string }) => {
+    .option('--print-address', 'print the node address derived from the key, then exit')
+    .action(async (urls: string | undefined, options: { config?: string, printAddress?: boolean }) => {
         const config = readConfigAndMigrateIfNeeded(options.config)
         const client = new StreamrClient(config.client)
         try {
             const nodeAddress = await client.getUserId()
+            if (options.printAddress === true) {
+                process.stdout.write(nodeAddress)
+                return
+            }
             const assignmentStreamId = formStorageNodeAssignmentStreamId(nodeAddress)
             try {
                 await client.getStream(assignmentStreamId)
@@ -30,9 +35,13 @@ program
                     throw err
                 }
             }
-            await client.setStorageNodeMetadata({ urls: urls.split(',').map((url) => url.trim()) })
-            const metadata = await client.getStorageNodeMetadata(nodeAddress)
-            console.info(`Registered ${nodeAddress} with URLs: ${metadata.urls.join(', ')}`)
+            if (urls !== undefined && urls.trim() !== '') {
+                await client.setStorageNodeMetadata({ urls: urls.split(',').map((url) => url.trim()) })
+                const metadata = await client.getStorageNodeMetadata(nodeAddress)
+                console.info(`Registered ${nodeAddress} with URLs: ${metadata.urls.join(', ')}`)
+            } else {
+                console.info(`Assignment stream ready for ${nodeAddress}. No URL given, so the node is not registered for reads yet.`)
+            }
         } finally {
             await client.destroy()
         }

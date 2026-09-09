@@ -6,13 +6,14 @@
 #   ./install.sh
 #
 # It asks for what only you can provide (a key, a hostname), does the rest
-# (config, build, bring-up, on-chain registration, HTTPS), and pauses for the
+# (config, build, on-chain preparation, bring-up, HTTPS), and pauses for the
 # steps that live outside the machine: funding the node with POL, pointing DNS
 # at it, and opening the firewall ports.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 RPCS='[ { "url": "https://polygon.drpc.org" }, { "url": "https://polygon-bor-rpc.publicnode.com" }, { "url": "https://rpc.ankr.com/polygon" } ]'
+CONFIG_IN_CONTAINER="/home/streamr/.streamr/config/pombo-node.json"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ask() { local prompt="$1" default="${2:-}" reply; read -rp "$prompt " reply; echo "${reply:-$default}"; }
@@ -74,41 +75,71 @@ EOF
 chmod 600 config/pombo-node.json
 say "Wrote config/pombo-node.json"
 
-# --- build and start ---
-say "Building the image and starting the node and Cassandra (the first build takes several minutes)..."
-$DOCKER compose up -d --build
+# --- build the image (needed for the register one-offs below and for the node) ---
+say "Building the node image (the first build takes several minutes)..."
+$DOCKER compose build node
 
-# --- wait for the node and read its address ---
-say "Waiting for the node to come up..."
-ADDRESS=""
-for _ in $(seq 1 60); do
-    ADDRESS="$($DOCKER compose logs node 2>/dev/null | sed -n 's/.*Node address \(0x[0-9a-fA-F]\{40\}\).*/\1/p' | tail -1)"
-    [[ -n "$ADDRESS" ]] && break
-    sleep 5
-done
-[[ -n "$ADDRESS" ]] || { echo "The node did not report its address in time. Check: docker compose logs node"; exit 1; }
+# --- derive the node address from the key (a local operation, no funds needed) ---
+say "Reading the node address from the key..."
+ADDRESS="$($DOCKER compose run --rm --no-deps -T node node dist/bin/streamr-storage-node-register.js --print-address --config "$CONFIG_IN_CONTAINER" 2>/dev/null | tr -d '[:space:]')"
+[[ "$ADDRESS" =~ ^0x[0-9a-fA-F]{40}$ ]] || {
+    echo "Could not derive the node address. Run without hiding errors to see why:"
+    echo "  $DOCKER compose run --rm --no-deps node node dist/bin/streamr-storage-node-register.js --print-address --config $CONFIG_IN_CONTAINER"
+    exit 1
+}
 say "This node's address is: $ADDRESS"
 
 # --- fund, outside the machine ---
-say "Fund this address with about 1 POL from any wallet (it pays for the one registration transaction)."
+# The node cannot start until its assignment stream exists on-chain, and creating
+# that stream (and registering the URL) spends POL. So funding comes before bring-up.
+say "Fund this address with about 1 POL from any wallet. It pays for creating the node's"
+say "assignment stream and registering it. If the key you pasted already has POL, just continue."
 read -rp "Press Enter once the address has POL... " _
 
-# --- register on-chain ---
+# --- prepare the node on-chain: create the assignment stream (and register the URL if given) ---
 if [[ -n "$HOSTNAME_PUBLIC" ]]; then
-    say "Registering the node on-chain as https://$HOSTNAME_PUBLIC ..."
-    $DOCKER compose run --rm node node dist/bin/streamr-storage-node-register.js "https://$HOSTNAME_PUBLIC" --config /home/streamr/.streamr/config/pombo-node.json
+    say "Creating the assignment stream and registering https://$HOSTNAME_PUBLIC ..."
+    $DOCKER compose run --rm --no-deps node node dist/bin/streamr-storage-node-register.js "https://$HOSTNAME_PUBLIC" --config "$CONFIG_IN_CONTAINER"
+else
+    say "Creating the assignment stream (no hostname given, so the URL is not registered yet)..."
+    $DOCKER compose run --rm --no-deps node node dist/bin/streamr-storage-node-register.js --config "$CONFIG_IN_CONTAINER"
+fi
 
+# --- start the node and its database ---
+say "Starting the node and Cassandra..."
+$DOCKER compose up -d
+
+# --- wait until the node reports its address (now that the assignment stream exists) ---
+say "Waiting for the node to come up..."
+UP=""
+for _ in $(seq 1 60); do
+    if $DOCKER compose logs node 2>/dev/null | grep -qi "Node address $ADDRESS"; then
+        UP=1
+        break
+    fi
+    sleep 5
+done
+if [[ -z "$UP" ]]; then
+    echo "The node did not report its address in time. It may still be indexing the new"
+    echo "assignment stream; give it a minute, then check: $DOCKER compose logs node"
+else
+    say "The node is up: $ADDRESS"
+fi
+
+# --- HTTPS in front (only with a hostname) ---
+if [[ -n "$HOSTNAME_PUBLIC" ]]; then
     say "Starting Caddy for HTTPS on $HOSTNAME_PUBLIC (needs ports 80 and 443 open, and DNS pointing here)..."
     [[ -f Caddyfile ]] || cp Caddyfile.example Caddyfile
     echo "POMBO_NODE_DOMAIN=$HOSTNAME_PUBLIC" > .env
     $DOCKER compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
-
     say "Done. From another machine, check:  curl https://$HOSTNAME_PUBLIC/capabilities"
     say "If the certificate is still being issued, wait a minute and retry."
 else
-    say "No hostname was given, so the node is not registered and has no HTTPS."
-    say "When you have a hostname, put it in the config and run:"
-    echo "  docker compose run --rm node node dist/bin/streamr-storage-node-register.js https://YOUR_HOST --config /home/streamr/.streamr/config/pombo-node.json"
+    say "No hostname was given, so there is no HTTPS yet. When you have one, put it in the"
+    say "config, register the URL, and start Caddy:"
+    echo "  docker compose run --rm node node dist/bin/streamr-storage-node-register.js https://YOUR_HOST --config $CONFIG_IN_CONTAINER"
+    echo "  cp Caddyfile.example Caddyfile && echo POMBO_NODE_DOMAIN=YOUR_HOST > .env"
+    echo "  docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d"
 fi
 
 say "Retention runs automatically. See POMBO.md to tune it."
