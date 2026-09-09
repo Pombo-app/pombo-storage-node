@@ -6,10 +6,10 @@ What the node does beyond a vanilla Streamr storage node is in [POMBO.md](POMBO.
 
 The recommended way is the one-command installer under **Quick install** below:
 an interactive wizard that asks whether to generate a key or use yours, and your
-hostname, then builds, pauses for funding, registers, and brings the node up. The
-numbered steps after it are the same procedure by hand, for troubleshooting or a
-custom setup. Every command is meant to be copy-pasted; lines you must edit are
-called out.
+hostname, then pulls the prebuilt image (or builds from source if it cannot),
+pauses for funding, registers, and brings the node up. The numbered steps after
+it are the same procedure by hand, for troubleshooting or a custom setup. Every
+command is meant to be copy-pasted; lines you must edit are called out.
 
 ## Quick install (recommended)
 
