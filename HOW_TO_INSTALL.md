@@ -21,9 +21,7 @@ yours, and your hostname, then does the rest:
 bash <(curl -fsSL https://raw.githubusercontent.com/Pombo-app/pombo-storage-node/pombo/103.3.1/bootstrap.sh)
 ```
 
-While the repository is private, download `bootstrap.sh` with your GitHub
-credentials and run `bash bootstrap.sh` instead. If the node is already
-cloned, run `deploy/install.sh` directly.
+If the node is already cloned, run `deploy/install.sh` directly.
 
 The installer pauses for the two things it cannot do for you: funding the node
 with POL, and opening the firewall ports. The steps below are the same
@@ -33,9 +31,9 @@ procedure by hand, if you prefer to run them yourself or need to troubleshoot.
 
 - A machine with **Docker** and the compose plugin, and a few tens of GB of
   disk that grows with the channels you host. The node and Cassandra run
-  comfortably in **4 GB of RAM**, but the image build (step 4) compiles the
-  node from source and is memory-hungry: give it **8 GB**, or add swap on a
-  4 GB machine, or build the image on a bigger machine and pull it.
+  comfortably in **4 GB of RAM**. Building the image from source is
+  memory-hungry (give it **8 GB**, or add swap); to skip the build, pull the
+  prebuilt image (see "Prebuilt image" below).
 - A **public IP** with these ports reachable from the internet:
   - `443` and `80` for the HTTPS endpoint (80 is used once to issue the certificate),
   - `32200` for the Streamr overlay.
@@ -85,10 +83,6 @@ git clone https://github.com/Pombo-app/pombo-storage-node.git
 cd pombo-storage-node/deploy
 ```
 
-While the repository is private, clone it with your GitHub credentials, for
-example `gh repo clone Pombo-app/pombo-storage-node` after `gh auth login`, or
-a personal access token in the URL.
-
 ## 3. Create the node's key and configuration
 
 Generate a private key for the node. Its address is the node's identity;
@@ -111,8 +105,8 @@ Edit two fields:
 - `client.network.controlLayer.websocketHost`: your public hostname (the same
   one the DNS record points at), so the overlay can reach you on 32200.
 
-Leave `plugins.storage.signedReads.enabled` at `true`: gated channels are
-only readable with a signed request, which is what the Pombo clients do.
+Leave `plugins.storage.signedReads.enabled` at `true`: gated channels are then
+served only to a request signed by someone with access to the channel.
 
 ## 4. Find the node's address and fund it
 
@@ -239,16 +233,16 @@ schema to adapt.
 - **The node logs `stored_at` and refuses to start:** the Cassandra schema is
   missing a column; apply the file named in the message (see Upgrade).
 - **The web app will not add your node:** it requires a registered `https://`
-  hostname URL. Register one (step 7); an IP or plain HTTP is rejected.
+  hostname URL. Register one (step 5); an IP or plain HTTP is rejected.
 - **`docker compose up --build` fails to build:** make sure you cloned the
   whole repository and have a recent Docker; the image compiles the node from
   source and needs network access during the build.
 
 ## Prebuilt image (skip the ~10-minute build)
 
-Instead of building the node from source you can pull the published image,
-once it is public. The compose override `deploy/docker-compose.image.yml`
-repoints the node service at it:
+Instead of building the node from source you can pull the published image. The
+compose override `deploy/docker-compose.image.yml` repoints the node service at
+it:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.image.yml pull
