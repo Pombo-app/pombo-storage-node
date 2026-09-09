@@ -62,6 +62,8 @@ fi
 # --- the hostname ---
 say "The Pombo web app only reads from an https:// endpoint on a real hostname."
 HOSTNAME_PUBLIC="$(ask 'Public hostname for this node (e.g. node.example.org; blank = local test only):')"
+# Tolerate a pasted scheme or trailing slash: we want the bare hostname.
+HOSTNAME_PUBLIC="${HOSTNAME_PUBLIC#http://}"; HOSTNAME_PUBLIC="${HOSTNAME_PUBLIC#https://}"; HOSTNAME_PUBLIC="${HOSTNAME_PUBLIC%%/*}"
 
 # --- signed reads ---
 SIGNED_READS=true
