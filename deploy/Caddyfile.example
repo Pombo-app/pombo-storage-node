@@ -1,0 +1,6 @@
+# Reverse proxy that gives the node a real HTTPS endpoint. Caddy obtains and
+# renews the certificate from Let's Encrypt for the domain in POMBO_NODE_DOMAIN.
+# Copy to Caddyfile; no edits needed if you set POMBO_NODE_DOMAIN in .env.
+{$POMBO_NODE_DOMAIN} {
+    reverse_proxy node:8002
+}

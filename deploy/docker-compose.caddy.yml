@@ -1,0 +1,24 @@
+# HTTPS in front of the node. Use together with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+# Requires POMBO_NODE_DOMAIN in .env and a ./Caddyfile (copy Caddyfile.example).
+# Ports 80 and 443 must be reachable from the internet.
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - node
+    environment:
+      POMBO_NODE_DOMAIN: ${POMBO_NODE_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

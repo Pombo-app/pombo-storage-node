@@ -1,0 +1,191 @@
+# Installing a Pombo storage node
+
+This is the full procedure, from a bare machine to a node that a Pombo
+channel can store its history on. It runs the node and its Cassandra
+database with `docker compose`. What the node does beyond a vanilla Streamr
+storage node is described in [POMBO.md](POMBO.md).
+
+Every command is meant to be copy-pasted. Lines you must edit are called out.
+
+## 0. What you need
+
+- A machine with **Docker** and the compose plugin, **4 GB of RAM** or more,
+  and a few tens of GB of disk. Cassandra grows with the channels you host.
+- A **public IP** with these ports reachable from the internet:
+  - `443` and `80` for the HTTPS endpoint (80 is used once to issue the certificate),
+  - `32200` for the Streamr overlay.
+- A **hostname** you control, with a DNS `A` record pointing at the machine's
+  IP (for example `node.example.org`). The Pombo web app is a browser and
+  only reads from an `https://` endpoint with a valid certificate on a real
+  hostname; an IP address or plain HTTP will not work.
+- A little **POL** (Polygon's native token) on the node's address for the one
+  transaction that registers the node.
+
+## 1. Install Docker
+
+On a fresh Debian/Ubuntu machine:
+
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker "$USER"
+# log out and back in so the group applies, then check:
+docker version
+docker compose version
+```
+
+## 2. Get the node
+
+```bash
+git clone https://github.com/Pombo-app/pombo-storage-node.git
+cd pombo-storage-node/deploy
+```
+
+## 3. Create the node's key and configuration
+
+Generate a private key for the node. Its address is the node's identity;
+channel owners assign channels to that address.
+
+```bash
+echo "0x$(openssl rand -hex 32)"
+```
+
+Copy the example config and open it:
+
+```bash
+cp config/pombo-node.json.example config/pombo-node.json
+nano config/pombo-node.json
+```
+
+Edit two fields:
+
+- `client.auth.privateKey`: paste the `0x…` key from above.
+- `client.network.controlLayer.websocketHost`: your public hostname (the same
+  one the DNS record points at), so the overlay can reach you on 32200.
+
+Leave `plugins.storage.signedReads.enabled` at `true`: gated channels are
+only readable with a signed request, which is what the Pombo clients do.
+
+## 4. Start the node and its database
+
+```bash
+docker compose up -d --build
+```
+
+The first start builds the node image from source (several minutes), starts
+Cassandra, and creates the schema. Follow it with:
+
+```bash
+docker compose logs -f node
+```
+
+You are ready when you see `Started HTTP server on port 8002` and a line
+naming the node. The API is bound to `127.0.0.1:8002` on purpose; the next
+step puts HTTPS in front of it.
+
+Find the node's address (you will fund and register it):
+
+```bash
+docker compose logs node | grep "Node address"
+```
+
+## 5. Fund the node's address
+
+Send a small amount of POL (about 1 POL is plenty) to the node address from
+any wallet. This pays for the one registration transaction.
+
+## 6. Put HTTPS in front
+
+Set your domain and start Caddy, which obtains and renews the certificate for
+you:
+
+```bash
+cp Caddyfile.example Caddyfile
+echo "POMBO_NODE_DOMAIN=node.example.org" > .env   # <-- your hostname
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+```
+
+Check from another machine (not the node itself):
+
+```bash
+curl https://node.example.org/capabilities
+```
+
+It answers `{"name":"pombo-storage-node","features":[...]}`. If the
+certificate is still being issued, wait a minute and retry.
+
+## 7. Register the node on-chain
+
+This creates the node's assignment stream (needed once before it can serve a
+channel) and publishes its public URL so clients can find it. It reads the
+node key from the config, and is the transaction that spends POL:
+
+```bash
+docker compose run --rm node \
+  node dist/bin/streamr-storage-node-register.js https://node.example.org \
+  --config /home/streamr/.streamr/config/pombo-node.json
+```
+
+You can register several URLs at once, comma-separated, if you serve the same
+node at more than one hostname; the clients fail over between them.
+
+The node is now installed. A Pombo channel owner who picks your node's
+address when creating a channel gets its history stored here.
+
+## Everyday operations
+
+**Logs and status:**
+
+```bash
+docker compose ps
+docker compose logs -f node
+```
+
+**Upgrade** to a newer version of the node:
+
+```bash
+git pull
+docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+```
+
+Schema changes ship as files under `cassandra/`. The node refuses to start
+when a column it needs is missing and names the file to apply. Apply it with:
+
+```bash
+docker compose cp cassandra/<file>.cql cassandra:/tmp/x.cql
+docker compose exec cassandra cqlsh -f /tmp/x.cql
+```
+
+**Stop** the node (the database volume is kept):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml down
+```
+
+**Back up** the database — snapshot Cassandra before risky changes:
+
+```bash
+docker compose exec cassandra nodetool snapshot streamr
+```
+
+## Running more than one node (a cluster)
+
+This compose file is a single machine with its own Cassandra. To run several
+nodes that share the load and replicate each other's data, point each node at
+a shared Cassandra cluster with `NetworkTopologyStrategy` replication and set
+`plugins.storage.cluster` (`clusterSize`, `myIndexInCluster`) in each config.
+That setup is outside this file; `cassandra/init.cql` shows the single-node
+schema to adapt.
+
+## Troubleshooting
+
+- **`curl https://…/capabilities` hangs or fails to get a certificate:** ports
+  80 and 443 must be reachable from the internet and the DNS `A` record must
+  point at this machine. Caddy needs port 80 to answer the issuance challenge.
+- **The node logs `stored_at` and refuses to start:** the Cassandra schema is
+  missing a column; apply the file named in the message (see Upgrade).
+- **The web app will not add your node:** it requires a registered `https://`
+  hostname URL. Register one (step 7); an IP or plain HTTP is rejected.
+- **`docker compose up --build` fails to build:** make sure you cloned the
+  whole repository and have a recent Docker; the image compiles the node from
+  source and needs network access during the build.
