@@ -9,8 +9,11 @@ Every command is meant to be copy-pasted. Lines you must edit are called out.
 
 ## 0. What you need
 
-- A machine with **Docker** and the compose plugin, **4 GB of RAM** or more,
-  and a few tens of GB of disk. Cassandra grows with the channels you host.
+- A machine with **Docker** and the compose plugin, and a few tens of GB of
+  disk that grows with the channels you host. The node and Cassandra run
+  comfortably in **4 GB of RAM**, but the image build (step 4) compiles the
+  node from source and is memory-hungry: give it **8 GB**, or add swap on a
+  4 GB machine, or build the image on a bigger machine and pull it.
 - A **public IP** with these ports reachable from the internet:
   - `443` and `80` for the HTTPS endpoint (80 is used once to issue the certificate),
   - `32200` for the Streamr overlay.
@@ -39,6 +42,10 @@ docker compose version
 git clone https://github.com/Pombo-app/pombo-storage-node.git
 cd pombo-storage-node/deploy
 ```
+
+While the repository is private, clone it with your GitHub credentials, for
+example `gh repo clone Pombo-app/pombo-storage-node` after `gh auth login`, or
+a personal access token in the URL.
 
 ## 3. Create the node's key and configuration
 
@@ -167,6 +174,10 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml down
 ```bash
 docker compose exec cassandra nodetool snapshot streamr
 ```
+
+**Retention runs automatically.** The node prunes stored data past each
+stream's `storageDays` on its own timer, so there is no cron to set up. See
+the retention section of [POMBO.md](POMBO.md) to tune or disable it.
 
 ## Running more than one node (a cluster)
 
