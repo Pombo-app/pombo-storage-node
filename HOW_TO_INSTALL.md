@@ -219,11 +219,10 @@ the retention section of [POMBO.md](POMBO.md) to tune or disable it.
 ## Running more than one node (a cluster)
 
 This compose file is a single machine with its own Cassandra. To run several
-nodes that share the load and replicate each other's data, point each node at
-a shared Cassandra cluster with `NetworkTopologyStrategy` replication and set
-`plugins.storage.cluster` (`clusterSize`, `myIndexInCluster`) in each config.
-That setup is outside this file; `cassandra/init.cql` shows the single-node
-schema to adapt.
+nodes that share the load and replicate each other's data, follow
+[deploy/CLUSTER.md](deploy/CLUSTER.md): it points each node at a shared
+Cassandra cluster with `NetworkTopologyStrategy` replication and sets
+`plugins.storage.cluster` (`clusterSize`, `myIndexInCluster`) per node.
 
 ## Troubleshooting
 

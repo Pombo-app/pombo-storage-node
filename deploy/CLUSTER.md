@@ -2,7 +2,7 @@
 
 Several storage nodes that split the write load and replicate each other's
 data, so any node can serve any read. For a single node, see
-[HOW_TO_INSTALL.md](HOW_TO_INSTALL.md).
+[HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md).
 
 ## How it works
 
@@ -51,7 +51,7 @@ To build from source instead, drop `-f docker-compose.image.yml` and run
 
 ## 1. Every node: config
 
-Write `config/pombo-node.json` as in [HOW_TO_INSTALL](HOW_TO_INSTALL.md), with:
+Write `config/pombo-node.json` as in [HOW_TO_INSTALL](../HOW_TO_INSTALL.md), with:
 
 - the **same** cluster key in `client.auth.privateKey` on every node;
 - `client.network.controlLayer.websocketHost` = this node's hostname;
