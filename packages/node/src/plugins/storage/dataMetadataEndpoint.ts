@@ -27,10 +27,10 @@ const createHandler = (cassandraStorage: Storage): RequestHandler => {
     }
 }
 
-export const createDataMetadataEndpoint = (cassandraStorage: Storage): HttpServerEndpoint => {
+export const createDataMetadataEndpoint = (cassandraStorage: Storage, guards: RequestHandler[] = []): HttpServerEndpoint => {
     return {
         path: '/streams/:id/metadata/partitions/:partition',
         method: 'get',
-        requestHandlers: [createHandler(cassandraStorage)]
+        requestHandlers: [...guards, createHandler(cassandraStorage)]
     }
 }

@@ -99,7 +99,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         const signedReadsEnabled = this.pluginConfig.signedReads.enabled
         const readGuard = createSignedReadGuard(signedReadsEnabled, this.gates, this.signedRequestVerifier)
         this.addHttpServerEndpoint(createDataQueryEndpoint(this.cassandra, metricsContext, [readGuard]))
-        this.addHttpServerEndpoint(createDataMetadataEndpoint(this.cassandra))
+        this.addHttpServerEndpoint(createDataMetadataEndpoint(this.cassandra, [readGuard]))
         this.addHttpServerEndpoint(createStorageConfigEndpoint(this.storageConfig))
         const purgeAuthorizer = new PurgeAuthorizer(this.streamrClient, this.gates)
         this.addHttpServerEndpoint(createPurgeEndpoint(this.cassandra, purgeAuthorizer, this.signedRequestVerifier))
