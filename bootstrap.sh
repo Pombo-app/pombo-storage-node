@@ -53,12 +53,10 @@ clone_repo() {
         return
     fi
     say "Cloning the node..."
-    if ! git clone --branch "$BRANCH" "$REPO" "$DIR" 2>/dev/null; then
-        echo "Could not clone. If the repository is private, paste a GitHub token with read access."
-        read -rp "Token (blank to abort): " TOKEN
-        [[ -n "$TOKEN" ]] || { echo "Aborted."; exit 1; }
-        git clone --branch "$BRANCH" "https://${TOKEN}@github.com/Pombo-app/pombo-storage-node.git" "$DIR"
-    fi
+    git clone --branch "$BRANCH" "$REPO" "$DIR" || {
+        echo "Could not clone $REPO — check your network and that git is installed."
+        exit 1
+    }
 }
 
 install_prereqs
