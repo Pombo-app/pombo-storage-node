@@ -1,0 +1,20 @@
+This repository is a fork of the Streamr Network monorepo
+(https://github.com/streamr-dev/network), the work of Streamr Network AG and its
+contributors, distributed under the Streamr Network Open Source License (see
+LICENSE).
+
+The Streamr components are unmodified except for these Pombo patches:
+
+- packages/node/src/plugins/storage/ — ingest validation, signed reads, purge,
+  the storedAt column, automatic retention, and the capabilities and metadata
+  endpoints (IngestValidator, signedReads, purgeEndpoint, SignedRequest,
+  PomboGates, RetentionScheduler, Storage, DataQueryFormat, dataMetadataEndpoint,
+  capabilitiesEndpoint, StoragePlugin).
+- packages/node/bin/streamr-storage-node-register.ts — creates the node's
+  assignment stream and adds a --print-address mode.
+- packages/sdk/src/StreamrClient.ts — adds validateMessage() and
+  getMessageSigner(), used by the node to validate messages at ingest.
+- Build and deployment: Dockerfile.node, deploy/, bootstrap.sh, HOW_TO_INSTALL.md,
+  POMBO.md.
+
+Everything else is Streamr's, unmodified.

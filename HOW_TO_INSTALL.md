@@ -1,13 +1,17 @@
 # Installing a Pombo storage node
 
-This is the full procedure, from a bare machine to a node that a Pombo
-channel can store its history on. It runs the node and its Cassandra
-database with `docker compose`. What the node does beyond a vanilla Streamr
-storage node is described in [POMBO.md](POMBO.md).
+This gets you from a bare machine to a node that a Pombo channel can store its
+history on, running the node and its Cassandra database with `docker compose`.
+What the node does beyond a vanilla Streamr storage node is in [POMBO.md](POMBO.md).
 
-Every command is meant to be copy-pasted. Lines you must edit are called out.
+The recommended way is the one-command installer under **Quick install** below:
+an interactive wizard that asks whether to generate a key or use yours, and your
+hostname, then builds, pauses for funding, registers, and brings the node up. The
+numbered steps after it are the same procedure by hand, for troubleshooting or a
+custom setup. Every command is meant to be copy-pasted; lines you must edit are
+called out.
 
-## Quick install
+## Quick install (recommended)
 
 On a bare machine, one command installs Docker and git, fetches the node, and
 runs an interactive installer that asks whether to generate a key or use
