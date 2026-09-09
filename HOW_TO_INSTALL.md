@@ -7,6 +7,24 @@ storage node is described in [POMBO.md](POMBO.md).
 
 Every command is meant to be copy-pasted. Lines you must edit are called out.
 
+## Quick install
+
+On a bare machine, one command installs Docker and git, fetches the node, and
+runs an interactive installer that asks whether to generate a key or use
+yours, and your hostname, then does the rest:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Pombo-app/pombo-storage-node/pombo/103.3.1/bootstrap.sh)
+```
+
+While the repository is private, download `bootstrap.sh` with your GitHub
+credentials and run `bash bootstrap.sh` instead. If the node is already
+cloned, run `deploy/install.sh` directly.
+
+The installer pauses for the two things it cannot do for you: funding the node
+with POL, and opening the firewall ports. The steps below are the same
+procedure by hand, if you prefer to run them yourself or need to troubleshoot.
+
 ## 0. What you need
 
 - A machine with **Docker** and the compose plugin, and a few tens of GB of
