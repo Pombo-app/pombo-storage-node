@@ -26,20 +26,23 @@ case " ${ID:-} ${ID_LIKE:-} " in
 esac
 
 install_docker() {
-    command -v docker >/dev/null && return
-    say "Installing Docker..."
-    if [[ "$FAMILY" == "debian" ]]; then
-        curl -fsSL https://get.docker.com | sudo sh
-    elif [[ "$FAMILY" == "rhel" ]]; then
-        sudo dnf -y install dnf-plugins-core
-        sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-        sudo dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin --allowerasing
-    else
-        echo "Could not recognise this OS. Install Docker by hand (HOW_TO_INSTALL.md step 1), then run deploy/install.sh."
-        exit 1
+    if ! command -v docker >/dev/null; then
+        say "Installing Docker..."
+        if [[ "$FAMILY" == "debian" ]]; then
+            curl -fsSL https://get.docker.com | sudo sh
+        elif [[ "$FAMILY" == "rhel" ]]; then
+            sudo dnf -y install dnf-plugins-core
+            sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+            sudo dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin --allowerasing
+        else
+            echo "Could not recognise this OS. Install Docker by hand (HOW_TO_INSTALL.md step 1), then run deploy/install.sh."
+            exit 1
+        fi
+        sudo systemctl enable --now docker
     fi
-    sudo systemctl enable --now docker
-    sudo usermod -aG docker "$USER" || true
+    # Ensure this user can reach the docker socket without sudo, even when Docker
+    # was already installed (in which case the block above was skipped).
+    docker info >/dev/null 2>&1 || sudo usermod -aG docker "$USER" 2>/dev/null || true
 }
 
 # The deploy set is small and stable; fetch it file by file rather than cloning
