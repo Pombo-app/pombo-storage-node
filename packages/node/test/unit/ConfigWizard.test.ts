@@ -128,6 +128,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -136,6 +137,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             false,
             storagePath,
@@ -172,6 +174,57 @@ describe('Config wizard', () => {
         expectPathsEqual(extractStoragePath(summary), storagePath)
     })
 
+    it('configures a Pombo storage node', async () => {
+        const { answers } = await scenario([
+            Step.privateKeySource('enter'),
+            Step.revealPrivateKey('enter'),
+            Step.network('enter'),
+            Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode('enter'),
+            { prompt: input, question: /Cassandra host/i, action: act('enter') },
+            { prompt: input, question: /Cassandra keyspace/i, action: act('enter') },
+            { prompt: input, question: /Cassandra datacenter/i, action: act('enter') },
+            { prompt: input, question: /Cassandra username/i, action: act('enter') },
+            { prompt: input, question: /How many nodes share/i, action: act('enter') },
+            { prompt: confirm, question: /signed requests to read gated/i, action: act('enter') },
+            { prompt: input, question: /Port for the storage/i, action: act('enter') },
+            { prompt: select, question: /how is https handled/i, action: act('enter') },
+            { prompt: input, question: /registered under/i, action: act({ type: 'https://node.example.org' }, 'enter') },
+            Step.pubsub({ type: 'n' }, 'enter'),
+            Step.storage({ type: storagePath }, 'enter'),
+        ])
+
+        expect(answers).toEqual([
+            'Generate',
+            false,
+            'polygon',
+            false,
+            true,
+            '127.0.0.1',
+            'streamr',
+            'datacenter1',
+            '',
+            '1',
+            true,
+            '8002',
+            'proxy',
+            'https://node.example.org',
+            false,
+            storagePath,
+        ])
+
+        const config = JSON.parse(readFileSync(storagePath).toString())
+
+        expect(config.plugins.storage).toEqual({
+            cassandra: { hosts: ['127.0.0.1'], username: '', password: '', keyspace: 'streamr', datacenter: 'datacenter1' },
+            storageConfig: { refreshInterval: 600000 },
+            cluster: { clusterSize: 1, myIndexInCluster: 0 },
+            signedReads: { enabled: true },
+        })
+
+        expect(config.httpServer).toEqual({ port: 8002 })
+    })
+
     it('prints out the generated private key onto the screen if told to', async () => {
         const { answers } = await scenario([
             Step.privateKeySource('enter'),
@@ -191,6 +244,7 @@ describe('Config wizard', () => {
             Step.providePrivateKey({ type: IMPORTED_PRIVATE_KEY }, 'enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -199,6 +253,7 @@ describe('Config wizard', () => {
             'Import',
             IMPORTED_PRIVATE_KEY,
             'polygon',
+            false,
             false,
             false,
             storagePath,
@@ -263,6 +318,7 @@ describe('Config wizard', () => {
             Step.network('enter'),
             Step.rewards('enter'),
             Step.operator({ type: OPERATOR_ADDRESS }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -273,6 +329,7 @@ describe('Config wizard', () => {
             'polygon',
             true,
             OPERATOR_ADDRESS,
+            false,
             false,
             storagePath,
         ])
@@ -330,6 +387,7 @@ describe('Config wizard', () => {
                 { type: OPERATOR_ADDRESS },
                 'enter'
             ),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('abort'),
         ])
 
@@ -339,6 +397,7 @@ describe('Config wizard', () => {
             'polygon',
             true,
             OPERATOR_ADDRESS,
+            false,
         ])
 
         expect(existsSync(storagePath)).toBe(false)
@@ -350,6 +409,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins({ keypress: 'space' }, 'enter'),
             Step.pubsubPort('enter'),
@@ -360,6 +420,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             true,
             'websocket',
@@ -408,6 +469,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins({ keypress: 'space' }, 'enter'),
             Step.pubsubPort({ type: '2000' }, 'enter'),
@@ -418,6 +480,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             true,
             'websocket',
@@ -466,6 +529,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins(
                 { keypress: 'down' },
@@ -480,6 +544,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             true,
             'mqtt',
@@ -528,6 +593,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins(
                 { keypress: 'down' },
@@ -542,6 +608,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             true,
             'mqtt',
@@ -590,6 +657,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins(
                 { keypress: 'down' },
@@ -605,6 +673,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             true,
             'http',
@@ -653,6 +722,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins(
                 { keypress: 'down' },
@@ -668,6 +738,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             true,
             'http',
@@ -714,6 +785,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins(
                 { keypress: 'space' },
@@ -733,6 +805,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             true,
             'websocket,mqtt,http',
@@ -787,6 +860,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins(
                 { keypress: 'space' },
@@ -806,6 +880,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             true,
             'websocket,mqtt,http',
@@ -858,6 +933,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins({ keypress: 'space' }, 'enter'),
             Step.pubsubPort(
@@ -878,6 +954,7 @@ describe('Config wizard', () => {
             false,
             'polygon',
             false,
+            false,
             true,
             'websocket',
         ])
@@ -891,6 +968,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins(
                 { keypress: 'space' },
@@ -917,6 +995,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             true,
             'websocket,mqtt',
@@ -968,6 +1047,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins(
                 { keypress: 'space' },
@@ -994,6 +1074,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             true,
             'websocket,mqtt',
@@ -1049,6 +1130,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -1057,6 +1139,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             false,
             storagePath,
@@ -1089,6 +1172,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
             Step.overwriteStorage({ type: 'y' }, 'enter'),
@@ -1098,6 +1182,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             false,
             storagePath,
@@ -1135,6 +1220,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
             Step.overwriteStorage('enter'),
@@ -1145,6 +1231,7 @@ describe('Config wizard', () => {
             'Generate',
             false,
             'polygon',
+            false,
             false,
             false,
             storagePath,
@@ -1176,6 +1263,7 @@ describe('Config wizard', () => {
             Step.network({ keypress: 'down' }, 'enter'),
             Step.rewards('enter'),
             Step.operator({ type: OPERATOR_ADDRESS }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub('enter'),
             Step.pubsubPlugins(
                 { keypress: 'space' },
@@ -1197,6 +1285,7 @@ describe('Config wizard', () => {
             'polygonAmoy',
             true,
             OPERATOR_ADDRESS,
+            false,
             true,
             'websocket,mqtt,http',
             '7170',
@@ -1258,6 +1347,7 @@ describe('Config wizard', () => {
             Step.network('enter'),
             Step.rewards('enter'),
             Step.operator({ type: OPERATOR_ADDRESS }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -1278,6 +1368,7 @@ describe('Config wizard', () => {
             Step.network('enter'),
             Step.rewards('enter'),
             Step.operator({ type: OPERATOR_ADDRESS }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -1301,6 +1392,7 @@ describe('Config wizard', () => {
             Step.network('enter'),
             Step.rewards('enter'),
             Step.operator({ type: OPERATOR_ADDRESS }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -1326,6 +1418,7 @@ describe('Config wizard', () => {
             Step.network('enter'),
             Step.rewards('enter'),
             Step.operator({ type: OPERATOR_ADDRESS }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -1354,6 +1447,7 @@ describe('Config wizard', () => {
             Step.network('enter'),
             Step.rewards('enter'),
             Step.operator({ type: OPERATOR_ADDRESS }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -1382,6 +1476,7 @@ describe('Config wizard', () => {
             Step.network('enter'),
             Step.rewards('enter'),
             Step.operator({ type: OPERATOR_ADDRESS }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -1408,6 +1503,7 @@ describe('Config wizard', () => {
             Step.network('enter'),
             Step.rewards('enter'),
             Step.operator({ type: OPERATOR_ADDRESS }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -1432,6 +1528,7 @@ describe('Config wizard', () => {
             Step.network('enter'),
             Step.rewards('enter'),
             Step.operator({ type: OPERATOR_ADDRESS }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -1451,6 +1548,7 @@ describe('Config wizard', () => {
             Step.revealPrivateKey('enter'),
             Step.network('enter'),
             Step.rewards({ type: 'n' }, 'enter'),
+            Step.storageNode({ type: 'n' }, 'enter'),
             Step.pubsub({ type: 'n' }, 'enter'),
             Step.storage({ type: storagePath }, 'enter'),
         ])
@@ -1536,6 +1634,7 @@ const Step: Record<
     | 'network'
     | 'rewards'
     | 'pubsub'
+    | 'storageNode'
     | 'storage'
     | 'operator'
     | 'pubsubPlugins'
@@ -1571,6 +1670,11 @@ const Step: Record<
     pubsub: (...actions) => ({
         prompt: confirm,
         question: /node for data publishing/i,
+        action: act(...actions),
+    }),
+    storageNode: (...actions) => ({
+        prompt: confirm,
+        question: /run a Pombo storage node/i,
         action: act(...actions),
     }),
     storage: (...actions) => ({

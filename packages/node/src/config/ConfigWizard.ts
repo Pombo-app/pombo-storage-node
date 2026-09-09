@@ -49,6 +49,8 @@ export async function start(): Promise<void> {
             },
         } : {}
 
+        const storage = await getStorageNode()
+
         const { http, ...pubsubPlugins } = await getPubsubPlugins()
 
         /**
@@ -61,7 +63,9 @@ export async function start(): Promise<void> {
             })
         }
 
-        const httpServer = http?.port ? { port: http.port } : undefined
+        const storagePlugin = storage ? { storage: storage.plugin } : {}
+
+        const httpServer = storage?.httpServer ?? (http?.port ? { port: http.port } : undefined)
 
         const storagePath = await getStoragePath()
 
@@ -79,6 +83,7 @@ export async function start(): Promise<void> {
             },
             plugins: {
                 ...operatorPlugins,
+                ...storagePlugin,
                 ...pubsubPlugins,
             },
             httpServer,
@@ -88,6 +93,23 @@ export async function start(): Promise<void> {
         }
 
         persistConfig(storagePath, config)
+
+        if (storage) {
+            const registerUrlExample = storage.registerUrl ?? 'https://your-node.example.org'
+            log(`
+                >
+                > This is a Pombo storage node. Before it can serve a channel:
+                >
+                > 1. Create its assignment stream and register its public URL (one-time, costs a little POL):
+                >    *streamr-storage-node-register ${registerUrlExample} --config ${storagePath}*
+                >
+                > 2. Put HTTPS in front of port ${storage.httpServer.port}. The Pombo web app is a browser and only
+                >    talks to an https:// endpoint with a valid certificate on a real hostname, answering
+                >    *Access-Control-Allow-Origin: https://app.pombo.cc* (plus *Vary: Origin*). A reverse proxy
+                >    such as Caddy obtains and renews the certificate for you.
+                >
+            `)
+        }
 
         log(`
             >
@@ -285,6 +307,112 @@ async function getOperatorAddress(): Promise<string | undefined> {
     })
 
     return operator.toLowerCase()
+}
+
+interface StorageNodeSetup {
+    plugin: Record<string, unknown>
+    httpServer: { port: number, sslCertificate?: { certFileName: string, privateKeyFileName: string } }
+    registerUrl?: string
+}
+
+/**
+ * Configures the storage plugin: the Cassandra it writes to, its place in a
+ * cluster, whether reads of gated channels must be signed, and how its HTTP
+ * API is exposed.
+ */
+async function getStorageNode(): Promise<StorageNodeSetup | undefined> {
+    const setup = await confirm({
+        message: 'Do you want to run a Pombo storage node (store channel history)?',
+        default: true,
+    })
+
+    if (!setup) {
+        return undefined
+    }
+
+    const host = await input({
+        message: 'Cassandra host',
+        default: '127.0.0.1',
+    })
+
+    const keyspace = await input({
+        message: 'Cassandra keyspace',
+        default: 'streamr',
+    })
+
+    const datacenter = await input({
+        message: 'Cassandra datacenter',
+        default: 'datacenter1',
+    })
+
+    const username = await input({ message: 'Cassandra username (blank if none)', default: '' })
+
+    const cassandraPassword = username
+        ? await password({ message: 'Cassandra password' })
+        : ''
+
+    const clusterSize = Number(await input({
+        message: 'How many nodes share this storage cluster?',
+        default: '1',
+        validate: (value) => (Number.isInteger(Number(value)) && Number(value) >= 1) ? true : 'Enter a whole number >= 1',
+    }))
+
+    const myIndexInCluster = clusterSize > 1
+        ? Number(await input({
+            message: `This node's index in the cluster (0..${clusterSize - 1})`,
+            default: '0',
+            validate: (value) => {
+                const n = Number(value)
+                return (Number.isInteger(n) && n >= 0 && n < clusterSize) ? true : `Enter a whole number 0..${clusterSize - 1}`
+            },
+        }))
+        : 0
+
+    const signedReads = await confirm({
+        message: 'Require signed requests to read gated channels? (recommended for Pombo)',
+        default: true,
+    })
+
+    const httpPort = Number(await input({
+        message: 'Port for the storage HTTP API',
+        default: '8002',
+        validate: (value) => (Number.isInteger(Number(value)) && Number(value) >= 1024 && Number(value) <= 65535) ? true : 'Enter a port 1024..65535',
+    }))
+
+    const tls = await select<'proxy' | 'native' | 'none'>({
+        message: 'How is HTTPS handled for this node?',
+        choices: [
+            { value: 'proxy', name: 'A reverse proxy in front terminates TLS (recommended)' },
+            { value: 'native', name: 'This node serves HTTPS directly (you provide certificate files)' },
+            { value: 'none', name: 'Plain HTTP (local testing only; the web app will not use it)' },
+        ],
+        default: 'proxy',
+    })
+
+    const sslCertificate = tls === 'native'
+        ? {
+            certFileName: await input({ message: 'Path to the certificate file (PEM)', validate: (v) => v ? true : 'Required' }),
+            privateKeyFileName: await input({ message: 'Path to the private key file (PEM)', validate: (v) => v ? true : 'Required' }),
+        }
+        : undefined
+
+    const registerUrl = tls === 'none'
+        ? undefined
+        : await input({
+            message: 'Public URL this node will be registered under (e.g. https://node.example.org)',
+            validate: (v) => /^https:\/\/.+/.test(v) || v === '' ? true : 'Enter an https:// URL or leave blank',
+        })
+
+    return {
+        plugin: {
+            cassandra: { hosts: [host], username, password: cassandraPassword, keyspace, datacenter },
+            storageConfig: { refreshInterval: 600000 },
+            cluster: { clusterSize, myIndexInCluster },
+            signedReads: { enabled: signedReads },
+        },
+        httpServer: sslCertificate ? { port: httpPort, sslCertificate } : { port: httpPort },
+        registerUrl: (registerUrl !== undefined && registerUrl !== '') ? registerUrl : undefined,
+    }
 }
 
 interface PubsubPlugin {
