@@ -1,0 +1,22 @@
+# Makes the Cassandra service one node of a cross-machine cluster and publishes
+# the ports the peers use. Values come from deploy/.env:
+#   THIS_PUBLIC_IP   this VPS's own public IP
+#   CASSANDRA_SEEDS  comma-separated seed IPs (the first node's public IP)
+# The node's own cluster role (clusterSize, myIndexInCluster) is set in
+# config/pombo-node.json, not here.
+#
+# SECURITY: 7000 and 9042 below are published on the host. Cassandra has no
+# authentication in this setup, so the firewall MUST allow them only from the
+# other node's IP (a /32 rule per peer), never from 0.0.0.0/0.
+services:
+  cassandra:
+    environment:
+      CASSANDRA_CLUSTER_NAME: pombo-storage
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_SEEDS: "${CASSANDRA_SEEDS}"
+      CASSANDRA_BROADCAST_ADDRESS: "${THIS_PUBLIC_IP}"
+      CASSANDRA_BROADCAST_RPC_ADDRESS: "${THIS_PUBLIC_IP}"
+    ports:
+      - "7000:7000"
+      - "9042:9042"
