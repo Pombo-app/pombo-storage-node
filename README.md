@@ -17,7 +17,9 @@ otherwise:
 - **Signed reads** — the history of a gated channel is served only to a request
   signed by someone with current access.
 - **`storedAt`** — a receipt timestamp the node stamps on every message it accepts.
-- **Purge** — the stream owner or a moderator can delete specific messages.
+- **Purge** — the channel owner, a gate moderator, or (except on Sealed
+  channels) a message's own author, while they still hold its signing key, can
+  delete specific stored messages.
 
 `GET /capabilities` tells a Pombo node apart from a vanilla one.
 
