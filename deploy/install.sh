@@ -7,21 +7,34 @@
 #   ./install.sh
 #
 # It asks for what only you can provide (a key, a hostname, the cluster shape),
-# does the rest (config, image, on-chain preparation, bring-up, HTTPS), and
-# pauses for the steps that live outside the machine: funding the node with POL,
-# pointing DNS at it, and opening the firewall ports. It pulls the prebuilt
-# image, falling back to building from source only when a full source tree is
-# present next to this script.
+# validates each answer, does the rest (config, image, on-chain preparation,
+# bring-up, HTTPS), and only continues past funding and cross-machine firewall
+# once it has verified them on-chain / on the wire. It pulls the prebuilt image,
+# falling back to building from source only when a full source tree is present.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 RPCS='[ { "url": "https://polygon.drpc.org" }, { "url": "https://polygon-bor-rpc.publicnode.com" }, { "url": "https://rpc.ankr.com/polygon" } ]'
+RPC0="https://polygon.drpc.org"
+MIN_WEI="20000000000000000"   # 0.02 POL: enough for the assignment stream + registration on Polygon
 CONFIG_IN_CONTAINER="/home/streamr/.streamr/config/pombo-node.json"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ask() { local prompt="$1" default="${2:-}" reply; read -rp "$prompt " reply; echo "${reply:-$default}"; }
-# Re-prompt until the answer is valid instead of aborting the install. The prompt
-# and any error go to stderr (read -p already does), so $(...) captures only the value.
+# All ask_* re-prompt until the answer is valid instead of aborting the install.
+# The prompt and any error go to stderr, so $(...) captures only the value.
+ask_yn() {
+    local prompt="$1" default="${2:-}" hint reply
+    case "$default" in y) hint='[Y/n]' ;; n) hint='[y/N]' ;; *) hint='[y/n]' ;; esac
+    while true; do
+        read -rp "$prompt $hint " reply; reply="${reply:-$default}"
+        case "${reply,,}" in
+            y|yes) return 0 ;;
+            n|no)  return 1 ;;
+            *) echo "Please answer y or n." >&2 ;;
+        esac
+    done
+}
 ask_int() {
     local prompt="$1" min="$2" max="$3" default="${4:-}" reply
     while true; do
@@ -38,6 +51,8 @@ ask_ip() {
         echo "Please enter a valid IPv4 address (e.g. 203.0.113.10)." >&2
     done
 }
+# TCP reachability without extra tools: bash's /dev/tcp, guarded so a closed port never aborts the script.
+tcp_open() { timeout 5 bash -c "cat < /dev/null > /dev/tcp/$1/$2" 2>/dev/null; }
 
 command -v docker >/dev/null || { echo "Docker is not installed. See HOW_TO_INSTALL.md step 1."; exit 1; }
 # Fall back to sudo when the user is not yet in the docker group (fresh install, group not applied to this shell).
@@ -47,8 +62,11 @@ $DOCKER compose version >/dev/null 2>&1 || { echo "The docker compose plugin is 
 
 say "Pombo storage node installer"
 
+# This machine's public IP, used to sanity-check DNS and (in a cluster) to broadcast Cassandra.
+DETECTED_IP="$(curl -fsSL --max-time 8 https://api.ipify.org 2>/dev/null || true)"
+
 # --- the key ---
-if [[ "$(ask 'Do you already have a node private key? [y/N]' n)" =~ ^[Yy] ]]; then
+if ask_yn 'Do you already have a node private key?' n; then
     while true; do
         read -rsp "Paste the private key (0x + 64 hex): " PRIVATE_KEY; echo
         [[ "$PRIVATE_KEY" =~ ^0x[0-9a-fA-F]{64}$ ]] && break
@@ -59,15 +77,32 @@ else
     say "Generated a new private key for this node. It is written into the config; back it up."
 fi
 
-# --- the hostname ---
+# --- the hostname (validated, and checked against DNS when it resolves) ---
 say "The Pombo web app only reads from an https:// endpoint on a real hostname."
-HOSTNAME_PUBLIC="$(ask 'Public hostname for this node (e.g. node.example.org; blank = local test only):')"
-# Tolerate a pasted scheme or trailing slash: we want the bare hostname.
-HOSTNAME_PUBLIC="${HOSTNAME_PUBLIC#http://}"; HOSTNAME_PUBLIC="${HOSTNAME_PUBLIC#https://}"; HOSTNAME_PUBLIC="${HOSTNAME_PUBLIC%%/*}"
+while true; do
+    HOSTNAME_PUBLIC="$(ask 'Public hostname for this node (e.g. node.example.org; blank = local test only):')"
+    # Tolerate a pasted scheme or trailing path: we want the bare hostname.
+    HOSTNAME_PUBLIC="${HOSTNAME_PUBLIC#http://}"; HOSTNAME_PUBLIC="${HOSTNAME_PUBLIC#https://}"; HOSTNAME_PUBLIC="${HOSTNAME_PUBLIC%%/*}"
+    [[ -z "$HOSTNAME_PUBLIC" ]] && break
+    if [[ ! "$HOSTNAME_PUBLIC" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+        echo "That does not look like a hostname (e.g. node.example.org)." >&2; continue
+    fi
+    resolved="$(getent ahostsv4 "$HOSTNAME_PUBLIC" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')"
+    if [[ -z "$resolved" ]]; then
+        say "Warning: $HOSTNAME_PUBLIC does not resolve yet (DNS may still be propagating)."
+        ask_yn 'Use it anyway?' y && break || continue
+    elif [[ -n "$DETECTED_IP" ]] && ! grep -qw "$DETECTED_IP" <<<"$resolved"; then
+        say "Warning: $HOSTNAME_PUBLIC resolves to ${resolved% }, not this machine ($DETECTED_IP)."
+        say "HTTPS and the overlay will not work until it points here."
+        ask_yn 'Use it anyway?' n && break || continue
+    else
+        break
+    fi
+done
 
 # --- signed reads ---
 SIGNED_READS=true
-[[ "$(ask 'Require signed reads on gated channels? [Y/n]' y)" =~ ^[Nn] ]] && SIGNED_READS=false
+ask_yn 'Require signed reads on gated channels?' y || SIGNED_READS=false
 
 # --- cluster shape ---
 # A cluster is N machines sharing one key and one replicated Cassandra. Each node
@@ -81,10 +116,12 @@ NODE_INDEX=0
 IS_SEED=true
 SEED_IP=""
 THIS_PUBLIC_IP=""
-if [[ "$(ask 'Is this node part of a MULTI-MACHINE cluster? [y/N]' n)" =~ ^[Yy] ]]; then
+if ask_yn 'Is this node part of a MULTI-MACHINE cluster?' n; then
     CLUSTER=true
     CLUSTER_SIZE="$(ask_int 'How many nodes in the cluster (total machines)?' 2 64 2)"
-    if [[ "$(ask 'Is this the FIRST node (the seed, index 0)? [Y/n]' y)" =~ ^[Nn] ]]; then
+    if ask_yn 'Is this the FIRST node (the seed, index 0)?' y; then
+        IS_SEED=true
+    else
         IS_SEED=false
         if (( CLUSTER_SIZE == 2 )); then
             NODE_INDEX=1
@@ -94,7 +131,6 @@ if [[ "$(ask 'Is this node part of a MULTI-MACHINE cluster? [y/N]' n)" =~ ^[Yy] 
         fi
         SEED_IP="$(ask_ip 'Public IP of the first node (the Cassandra seed):')"
     fi
-    DETECTED_IP="$(curl -fsSL https://api.ipify.org 2>/dev/null || true)"
     THIS_PUBLIC_IP="$(ask_ip "This machine's public IP:" "$DETECTED_IP")"
     [[ "$IS_SEED" == true ]] && SEED_IP="$THIS_PUBLIC_IP"
 fi
@@ -157,13 +193,24 @@ else
     exit 1
 fi
 
-# --- cluster: the ports the peers use must be open before Cassandra can form a ring ---
+# --- cluster: the peers must reach each other's Cassandra ports before the ring can form ---
 if [[ "$CLUSTER" == true ]]; then
     say "Cluster networking: Cassandra ports 7000 and 9042 must be reachable between the cluster"
     say "machines, each allowed only from the other machines' IPs (a /32 rule per peer), NEVER from"
-    say "0.0.0.0/0 (Cassandra has no authentication here). Open them now if you have not."
-    [[ "$IS_SEED" == true ]] || say "Start the FIRST node (the seed) before this one; this node waits for the ring to form."
-    read -rp "Press Enter once 7000 and 9042 are open between the cluster machines... " _
+    say "0.0.0.0/0 (Cassandra has no authentication here)."
+    if [[ "$IS_SEED" == true ]]; then
+        say "This is the seed; open 7000 and 9042 to the other machines' IPs. They will verify it when they join."
+        read -rp "Press Enter once 7000 and 9042 are open to the other machines... " _
+    else
+        say "Checking that the seed ($SEED_IP) is reachable on 7000 and 9042 (start the seed first)..."
+        until tcp_open "$SEED_IP" 7000 && tcp_open "$SEED_IP" 9042; do
+            say "Cannot reach $SEED_IP on 7000/9042 yet. Open both from this machine's IP on the seed's"
+            say "firewall (and this machine's, for the return path), and make sure the seed is running."
+            read -rp "Press Enter to re-check (or type 'skip' to proceed anyway): " r
+            [[ "$r" == skip ]] && break
+        done
+        [[ -n "${r:-}" && "$r" == skip ]] || say "Seed reachable on 7000 and 9042."
+    fi
 fi
 
 # --- derive the node address from the key (a local operation, no funds needed) ---
@@ -185,12 +232,27 @@ wait_for_cassandra() {
     echo "Cassandra did not become ready in time. Check: $DOCKER compose logs cassandra"; exit 1
 }
 
+# Poll the chain until the address holds enough POL, instead of trusting a keypress.
+wait_for_funds() {
+    local addr="$1" js out
+    js='const min=BigInt(process.env.MINWEI);fetch(process.env.RPC,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_getBalance",params:[process.env.ADDR,"latest"]})}).then(r=>r.json()).then(j=>{const w=BigInt(j.result);process.stdout.write((w>=min?"OK ":"LOW ")+(Number(w)/1e18).toFixed(4));}).catch(()=>process.stdout.write("ERR"));'
+    say "Fund this address with about 1 POL from any wallet: $addr"
+    say "It pays once for creating the node's assignment stream and registering it."
+    while true; do
+        out="$($DOCKER compose $COMPOSE run --rm --no-deps -T -e RPC="$RPC0" -e ADDR="$addr" -e MINWEI="$MIN_WEI" node node -e "$js" 2>/dev/null | tr -d '[:space:]')"
+        case "$out" in
+            OK*)  say "Balance ${out#OK} POL: funded. Continuing."; return 0 ;;
+            LOW*) say "Balance ${out#LOW} POL: not enough yet." ;;
+            *)    say "Could not read the balance from the RPC (network?). You can retry or skip." ;;
+        esac
+        read -rp "Press Enter to re-check (or type 'skip' to proceed anyway): " r
+        [[ "$r" == skip ]] && return 0
+    done
+}
+
 register_urls() {
     # $1 = comma-separated URLs. Creates the assignment stream and registers the URLs.
-    say "Fund this address with about 1 POL from any wallet: $ADDRESS"
-    say "It pays once for creating the node's assignment stream and registering it. If the key"
-    say "already has POL, just continue."
-    read -rp "Press Enter once the address has POL... " _
+    wait_for_funds "$ADDRESS"
     say "Creating the assignment stream and registering: $1"
     $DOCKER compose $COMPOSE run --rm --no-deps node node dist/bin/streamr-storage-node-register.js "$1" --config "$CONFIG_IN_CONTAINER"
 }
@@ -248,8 +310,7 @@ else
         register_urls "https://$HOSTNAME_PUBLIC"
     else
         say "Creating the assignment stream (no hostname given, so no URL is registered yet)..."
-        say "Fund this address with about 1 POL first: $ADDRESS"
-        read -rp "Press Enter once the address has POL... " _
+        wait_for_funds "$ADDRESS"
         $DOCKER compose $COMPOSE run --rm --no-deps node node dist/bin/streamr-storage-node-register.js --config "$CONFIG_IN_CONTAINER"
     fi
     say "Starting the node and Cassandra..."
