@@ -41,11 +41,12 @@ const readEnvelope = (req: Request): unknown => {
 }
 
 /**
- * Requires a signed request to read the streams of a gated channel (all but
- * the admin stream). The signer must have access to the channel right now:
- * the gate owner, a moderator, or an account the gate's checkAccess accepts.
- * Streams outside gated channels are served as before. When the chain
- * cannot be consulted the read is refused: a read can be retried, a leak
+ * Requires a signed request to read a gated channel (all but the admin stream)
+ * or any non-public stream (e.g. a DM inbox). The signer must have access right
+ * now: for a gated channel the gate owner, a moderator, or an account the gate
+ * accepts; for a non-gated stream, SUBSCRIBE on it. A stream whose SUBSCRIBE is
+ * public is served without a signature, as a vanilla node serves it. When the
+ * chain cannot be consulted the read is refused: a read can be retried, a leak
  * cannot be undone.
  */
 export const createSignedReadGuard = (
@@ -72,9 +73,28 @@ export const createSignedReadGuard = (
             res.status(503).json({ error: 'Cannot verify access right now' })
             return
         }
+        // Pick the access rule. A gated channel: owner, moderator, or the gate's
+        // access. A non-gated stream: open when SUBSCRIBE is public (as a vanilla
+        // node serves it); otherwise it is private (e.g. a DM inbox), so require a
+        // signed read by an account that holds SUBSCRIBE.
+        let accessCheck: (user: EthereumAddress) => Promise<boolean>
         if (gate === null) {
-            next()
-            return
+            let isPublic: boolean
+            try {
+                isPublic = await gates.isPublicSubscribe(streamId)
+            } catch (err) {
+                logger.warn('Could not read permissions, refusing read', { streamId, err })
+                res.status(503).json({ error: 'Cannot verify access right now' })
+                return
+            }
+            if (isPublic) {
+                next()
+                return
+            }
+            accessCheck = (user) => gates.hasSubscribe(streamId, user)
+        } else {
+            const info = gate
+            accessCheck = async (user) => (user === info.owner) || await gates.isModerator(info.address, user) || await gates.hasAccess(info.address, user)
         }
         let user: EthereumAddress
         try {
@@ -89,14 +109,14 @@ export const createSignedReadGuard = (
         }
         let allowed: boolean
         try {
-            allowed = (user === gate.owner) || await gates.isModerator(gate.address, user) || await gates.hasAccess(gate.address, user)
+            allowed = await accessCheck(user)
         } catch (err) {
             logger.warn('Could not verify access, refusing read', { streamId, user, err })
             res.status(503).json({ error: 'Cannot verify access right now' })
             return
         }
         if (!allowed) {
-            res.status(403).json({ error: 'No access to this channel' })
+            res.status(403).json({ error: 'No access to this stream' })
             return
         }
         next()

@@ -6,7 +6,7 @@ import { HttpServerEndpoint } from '../../Plugin'
  * only while the node requires signatures to read gated channels.
  */
 export const createCapabilitiesEndpoint = (signedReadsEnabled: boolean): HttpServerEndpoint => {
-    const features = ['metadata', 'storedAt', 'purge']
+    const features = ['metadata', 'storedAt', 'purge', 'stored']
     if (signedReadsEnabled) {
         features.push('signedReads')
     }

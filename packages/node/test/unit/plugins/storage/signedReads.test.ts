@@ -76,6 +76,8 @@ describe('signed reads', () => {
         gateReader.getInfo.mockResolvedValue(gate())
         gateReader.isModerator.mockResolvedValue(false)
         gateReader.checkAccess.mockResolvedValue(false)
+        // Non-gated streams: public by default (served without a signature).
+        client.hasPermission.mockImplementation(async (query: any) => query.public === true)
         gates = new PomboGates(client, gateReader)
     })
 
@@ -143,6 +145,30 @@ describe('signed reads', () => {
     it('refuses reads while the chain cannot be consulted', async () => {
         gateReader.checkAccess.mockRejectedValue(new Error('RPC unavailable'))
         await signedRead(createApp(true), `${BASE}-1`, { count: '5' }, 503)
+    })
+
+    describe('non-gated private streams (e.g. a DM inbox)', () => {
+        const DM = '0x1234567890123456789012345678901234567890/Pombo-DM-1'
+
+        it('refuses an unsigned read', async () => {
+            client.hasPermission.mockResolvedValue(false)
+            await read(createApp(true), DM, { count: '5' }).expect(401)
+        })
+
+        it('refuses a signer without SUBSCRIBE', async () => {
+            client.hasPermission.mockResolvedValue(false)
+            await signedRead(createApp(true), DM, { count: '5' }, 403)
+        })
+
+        it('serves a SUBSCRIBE holder', async () => {
+            client.hasPermission.mockImplementation(async (query: any) => (query.public !== true) && (query.userId === user))
+            await signedRead(createApp(true), DM, { count: '5' }, 200)
+        })
+
+        it('refuses reads while the chain cannot be consulted', async () => {
+            client.hasPermission.mockRejectedValue(new Error('RPC unavailable'))
+            await signedRead(createApp(true), DM, { count: '5' }, 503)
+        })
     })
 
     it('canonicalises the query string by parameter name', () => {

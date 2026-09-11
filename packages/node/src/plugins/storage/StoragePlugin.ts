@@ -9,6 +9,7 @@ import { SignedRequestVerifier } from './SignedRequest'
 import { RetentionScheduler } from './RetentionScheduler'
 import { createCapabilitiesEndpoint } from './capabilitiesEndpoint'
 import { PurgeAuthorizer, createPurgeEndpoint } from './purgeEndpoint'
+import { createStoredEndpoint } from './storedEndpoint'
 import { createSignedReadGuard } from './signedReads'
 import { StorageConfig } from './StorageConfig'
 import PLUGIN_CONFIG_SCHEMA from './config.schema.json'
@@ -103,6 +104,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         this.addHttpServerEndpoint(createStorageConfigEndpoint(this.storageConfig))
         const purgeAuthorizer = new PurgeAuthorizer(this.streamrClient, this.gates)
         this.addHttpServerEndpoint(createPurgeEndpoint(this.cassandra, purgeAuthorizer, this.signedRequestVerifier))
+        this.addHttpServerEndpoint(createStoredEndpoint(this.cassandra, this.gates, this.streamrClient, this.signedRequestVerifier))
         this.addHttpServerEndpoint(createCapabilitiesEndpoint(signedReadsEnabled))
 
         // In a cluster the deletes replicate through Cassandra, so retention runs on one node only.

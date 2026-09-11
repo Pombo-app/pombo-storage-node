@@ -1,4 +1,4 @@
-import { StreamrClient } from '@streamr/sdk'
+import { StreamPermission, StreamrClient } from '@streamr/sdk'
 import { EthereumAddress, MapWithTtl, toEthereumAddress } from '@streamr/utils'
 import { Contract } from 'ethers'
 
@@ -109,6 +109,8 @@ export class PomboGates {
     private readonly gateCache = new MapWithTtl<string, GateInfo | null>(() => CACHE_TTL)
     private readonly moderatorCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
     private readonly accessCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
+    private readonly subscribePublicCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
+    private readonly subscribeUserCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
 
     constructor(client: StreamrClient, gateReader: GateReader = createEthersGateReader(client)) {
         this.client = client
@@ -141,10 +143,48 @@ export class PomboGates {
         return this.cachedLookup(this.accessCache, gateAddress, user, () => this.gateReader.checkAccess(gateAddress, user))
     }
 
+    /** Whether the stream can be subscribed to by anyone (a public stream). */
+    async isPublicSubscribe(streamId: string): Promise<boolean> {
+        const cached = this.subscribePublicCache.get(streamId)
+        if (cached !== undefined) {
+            return cached
+        }
+        const result = await this.client.hasPermission({ streamId, permission: StreamPermission.SUBSCRIBE, public: true })
+        this.subscribePublicCache.set(streamId, result)
+        return result
+    }
+
+    /** Whether `user` holds SUBSCRIBE on the stream (not counting a public grant). */
+    async hasSubscribe(streamId: string, user: EthereumAddress): Promise<boolean> {
+        const key = `${streamId}_${user}`
+        const cached = this.subscribeUserCache.get(key)
+        if (cached !== undefined) {
+            return cached
+        }
+        const result = await this.client.hasPermission({ streamId, permission: StreamPermission.SUBSCRIBE, userId: user, allowPublic: false })
+        this.subscribeUserCache.set(key, result)
+        return result
+    }
+
+    /**
+     * Whether `user` may read this stream's history: for a gated channel the
+     * gate owner, a moderator or an account the gate accepts; for a stream with
+     * no gate, a public stream or one where `user` holds SUBSCRIBE.
+     */
+    async canRead(streamId: string, user: EthereumAddress): Promise<boolean> {
+        const gate = await this.getGate(streamId)
+        if (gate !== null) {
+            return (user === gate.owner) || await this.isModerator(gate.address, user) || await this.hasAccess(gate.address, user)
+        }
+        return await this.isPublicSubscribe(streamId) || await this.hasSubscribe(streamId, user)
+    }
+
     destroy(): void {
         this.gateCache.clear()
         this.moderatorCache.clear()
         this.accessCache.clear()
+        this.subscribePublicCache.clear()
+        this.subscribeUserCache.clear()
     }
 
     // eslint-disable-next-line class-methods-use-this
