@@ -31,15 +31,19 @@
                 "hosts": ["cassandra"],
                 "username": "",
                 "password": "",
-                "keyspace": "streamr",
-                "datacenter": "datacenter1"
+                "keyspace": "pombo_storage",
+                "datacenter": "dc1"
             },
             "storageConfig": {
-                "refreshInterval": 600000
+                "refreshInterval": 60000
             },
             "cluster": {
                 "clusterSize": 1,
                 "myIndexInCluster": 0
+            },
+            "retention": {
+                "enabled": true,
+                "abortFractionPercent": 80
             },
             "signedReads": {
                 "enabled": true

@@ -12,13 +12,24 @@ services:
     image: cassandra:4.1
     restart: unless-stopped
     environment:
-      CASSANDRA_CLUSTER_NAME: pombo-storage
+      # Ring identity and keyspace name; CASSANDRA_KEYSPACE must equal the
+      # node's cassandra.keyspace setting. Override both in .env to join an
+      # existing Cassandra under other names.
+      CASSANDRA_CLUSTER_NAME: ${CASSANDRA_CLUSTER_NAME:-pombo-storage}
+      # The node's cassandra.datacenter setting must equal this DC name.
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_DC: dc1
+      CASSANDRA_RACK: ${CASSANDRA_RACK:-rack1}
       # Cassandra defaults to a quarter of the machine's RAM; a storage node
-      # is fine with 1 GB on a small box.
-      MAX_HEAP_SIZE: 1G
-      HEAP_NEWSIZE: 256M
+      # is fine with 1 GB on a small box. Set CASSANDRA_HEAP (and a quarter of
+      # it as CASSANDRA_HEAP_NEW) in .env on a bigger one.
+      MAX_HEAP_SIZE: ${CASSANDRA_HEAP:-1G}
+      HEAP_NEWSIZE: ${CASSANDRA_HEAP_NEW:-256M}
     volumes:
       - cassandra-data:/var/lib/cassandra
+    # The failure detector's default (8) marks a peer down during ~1 s GC pauses
+    # and splits a small ring; 12 has run in production since 2026-09.
+    command: ["bash", "-c", "sed -i 's/^# phi_convict_threshold: 8$/phi_convict_threshold: 12/' /etc/cassandra/cassandra.yaml && exec docker-entrypoint.sh cassandra -f"]
     healthcheck:
       test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' > /dev/null 2>&1"]
       interval: 20s
@@ -34,7 +45,7 @@ services:
         condition: service_healthy
     volumes:
       - ./cassandra/init.cql:/init.cql:ro
-    command: ["cqlsh", "cassandra", "-f", "/init.cql"]
+    command: ["bash", "-c", "sed 's/pombo_storage/${CASSANDRA_KEYSPACE:-pombo_storage}/g' /init.cql | cqlsh cassandra"]
 
   node:
     build:
@@ -47,7 +58,7 @@ services:
         condition: service_completed_successfully
     environment:
       LOG_LEVEL: info
-      NODE_OPTIONS: --max-old-space-size=2048
+      NODE_OPTIONS: --max-semi-space-size=128 --max-old-space-size=2048
     volumes:
       - ./config:/home/streamr/.streamr/config:ro
     ports:

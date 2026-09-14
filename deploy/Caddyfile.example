@@ -1,6 +1,15 @@
 # Reverse proxy that gives the node a real HTTPS endpoint. Caddy obtains and
 # renews the certificate from Let's Encrypt for the domain in POMBO_NODE_DOMAIN.
 # Copy to Caddyfile; no edits needed if you set POMBO_NODE_DOMAIN in .env.
+#
+# The timeouts make a stuck node fail fast, so clients fall over to another
+# registered URL instead of hanging. They bound the connect and the wait for
+# the response headers only; a slow body (a large history page) is not cut.
 {$POMBO_NODE_DOMAIN} {
-    reverse_proxy node:8002
+    reverse_proxy node:8002 {
+        transport http {
+            dial_timeout 5s
+            response_header_timeout 20s
+        }
+    }
 }

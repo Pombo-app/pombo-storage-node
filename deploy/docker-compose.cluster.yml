@@ -1,28 +1,44 @@
-# Makes the Cassandra service one node of a cross-machine cluster and publishes
-# the ports the peers use. Values come from deploy/.env:
-#   THIS_PUBLIC_IP   this VPS's own public IP
-#   CASSANDRA_SEEDS  comma-separated seed IPs (the first node's public IP)
-# The node's own cluster role (clusterSize, myIndexInCluster) is set in
-# config/pombo-node.json, not here.
+# Makes this machine one node of a multi-machine cluster: its Cassandra joins
+# a ring with the other machines over the WireGuard tunnel (wg-setup.sh), and
+# a maintenance sidecar runs the periodic repair and garbage collection.
+# Values come from deploy/.env (written by install.sh):
+#   WG_IP               this machine's tunnel address (10.10.0.x)
+#   CASSANDRA_SEEDS     every machine's tunnel address, comma-separated
+#   CASSANDRA_RACK      rack<ordinal+1>
+#   CASSANDRA_KEYSPACE  the keyspace the node is configured with
+#   POMBO_NODE_ORDINAL  0 on the first machine, 1, 2, ... on the others
 #
-# SECURITY: 7000 and 9042 below are published on the host. Cassandra has no
-# authentication in this setup, so the firewall MUST allow them only from the
-# other node's IP (a /32 rule per peer), never from 0.0.0.0/0.
+# Cassandra is published on the tunnel address only: 7000/9042 are reachable
+# through the tunnel and from nowhere else, so they need no firewall rule.
+# wg0 must be up before this file is brought up (the port binding fails otherwise).
 services:
-  # In a cluster the replicated keyspace is created once, on the seed, with
-  # init-cluster.cql; the single-node auto-init (init.cql, SimpleStrategy) would
-  # collide with it, so it is turned into a no-op here.
+  # In a cluster the replicated keyspace is created once, on the first node,
+  # with init-cluster.cql; the single-node auto-init (init.cql, SimpleStrategy)
+  # would collide with it, so it is turned into a no-op here.
   cassandra-init:
     command: ["bash", "-c", "true"]
 
   cassandra:
     environment:
-      CASSANDRA_CLUSTER_NAME: pombo-storage
-      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
-      CASSANDRA_DC: datacenter1
       CASSANDRA_SEEDS: "${CASSANDRA_SEEDS}"
-      CASSANDRA_BROADCAST_ADDRESS: "${THIS_PUBLIC_IP}"
-      CASSANDRA_BROADCAST_RPC_ADDRESS: "${THIS_PUBLIC_IP}"
+      CASSANDRA_BROADCAST_ADDRESS: "${WG_IP}"
+      CASSANDRA_BROADCAST_RPC_ADDRESS: "${WG_IP}"
     ports:
-      - "7000:7000"
-      - "9042:9042"
+      - "${WG_IP}:7000:7000"
+      - "${WG_IP}:9042:9042"
+
+  maintenance:
+    image: cassandra:4.1
+    restart: unless-stopped
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    # Shares Cassandra's network namespace so nodetool reaches the JMX port,
+    # which stays bound to localhost (never on the bridge, never published).
+    network_mode: "service:cassandra"
+    environment:
+      POMBO_NODE_ORDINAL: "${POMBO_NODE_ORDINAL:-0}"
+      KEYSPACE: ${CASSANDRA_KEYSPACE:-pombo_storage}
+    volumes:
+      - ./maintenance/run.sh:/run.sh:ro
+    entrypoint: ["bash", "/run.sh"]

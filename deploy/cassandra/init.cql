@@ -1,14 +1,13 @@
 -- Schema for a single-node Pombo storage node. Applied once by the
 -- cassandra-init service; every statement is idempotent.
 --
--- For a multi-node Cassandra cluster replace SimpleStrategy with
--- NetworkTopologyStrategy and the replication factor you run, and apply the
--- file on one node only.
+-- A multi-machine cluster uses init-cluster.cql instead (NetworkTopologyStrategy,
+-- applied on the first node only).
 
-CREATE KEYSPACE IF NOT EXISTS streamr
+CREATE KEYSPACE IF NOT EXISTS pombo_storage
     WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': 1 };
 
-USE streamr;
+USE pombo_storage;
 
 CREATE TABLE IF NOT EXISTS bucket (
     stream_id   text,
