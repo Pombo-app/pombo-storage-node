@@ -10,6 +10,7 @@ const CONFIG: RetentionConfig = {
     intervalHours: 6,
     graceDays: 7,
     abortFractionPercent: 30,
+    abortMinStreams: 3,
     bucketDeleteLimit: 100000,
     rowDeleteLimit: 200000
 }
@@ -128,7 +129,7 @@ describe('RetentionScheduler orphan sweep', () => {
     })
 
     it('aborts if a suspiciously large fraction of streams look deleted', async () => {
-        // 2 of 3 deleted = 66% > 30%
+        // 2 of 3 deleted = 66% > 30%, and 3 streams reach abortMinStreams
         setChainState({ a: 'exists', b: 'deleted', c: 'deleted' })
         const cassandra = await run([
             { streamId: 'a', partition: 0, id: 'b1', newest: Date.now() - 100 * DAY_MS },
@@ -136,5 +137,15 @@ describe('RetentionScheduler orphan sweep', () => {
             { streamId: 'c', partition: 0, id: 'b3', newest: Date.now() - 100 * DAY_MS }
         ])
         expect(cassandra.batches).toHaveLength(0)
+    })
+
+    it('ignores the fraction guard below abortMinStreams', async () => {
+        // 1 of 2 deleted = 50% > 30%, but 2 streams are fewer than abortMinStreams
+        setChainState({ a: 'exists', b: 'deleted' })
+        const cassandra = await run([
+            { streamId: 'a', partition: 0, id: 'b1', newest: Date.now() - 100 * DAY_MS },
+            { streamId: 'b', partition: 0, id: 'b2', newest: Date.now() - 100 * DAY_MS }
+        ])
+        expect(cassandra.batches).toHaveLength(1)
     })
 })

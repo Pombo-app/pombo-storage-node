@@ -52,6 +52,7 @@ export interface StoragePluginConfig extends ApiPluginConfig {
         intervalHours: number
         graceDays: number
         abortFractionPercent: number
+        abortMinStreams: number
         bucketDeleteLimit: number
         rowDeleteLimit: number
     }
