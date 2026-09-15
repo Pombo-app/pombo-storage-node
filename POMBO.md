@@ -156,7 +156,8 @@ Storage plugin keys added to the upstream ones:
 | `retention.enabled` | true | prune stored data past each stream's storageDays (one machine per cluster) |
 | `retention.intervalHours` | 6 | how often retention runs |
 | `retention.graceDays` | 7 | hold before deleting an on-chain-deleted stream's data |
-| `retention.abortFractionPercent` | 30 | skip the orphan sweep when more than this share of streams look deleted on-chain, a sign of a misconfigured RPC or registry; the installer writes 80, since a node that has had many channels deleted legitimately crosses 30 |
+| `retention.abortFractionPercent` | 80 | skip the orphan sweep when more than this share of streams look deleted on-chain, a sign of a misconfigured RPC or registry |
+| `retention.abortMinStreams` | 10 | the share guard only applies once the node holds at least this many streams; below it, deleting one channel would trip any threshold |
 
 `client.cache.maxAge` in the node config governs how long permission
 lookups are cached; the example config sets 10 minutes so a revoked

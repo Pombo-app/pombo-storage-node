@@ -23,6 +23,9 @@ RUN apt-get update && apt-get --assume-yes --no-install-recommends install \
 	&& apt-get clean \
 	&& rm -rf /var/lib/apt/lists/*
 RUN usermod -d /home/streamr -l streamr node && groupmod -n streamr node
+# The node writes its GeoIP database under ~/.streamr; when only ~/.streamr/config
+# is bind-mounted, Docker would create the parent as root and the write fails.
+RUN mkdir -p /home/streamr/.streamr && chown streamr:streamr /home/streamr/.streamr
 USER streamr
 WORKDIR /home/streamr/network
 COPY --chown=root:root --from=build /usr/src/network/ .

@@ -19,6 +19,7 @@ export interface RetentionConfig {
     intervalHours: number
     graceDays: number
     abortFractionPercent: number
+    abortMinStreams: number
     bucketDeleteLimit: number
     rowDeleteLimit: number
 }
@@ -234,12 +235,16 @@ export class RetentionScheduler {
             return
         }
         const deleted = classified.filter((c) => c.state === 'deleted').map((c) => c.sid)
+        // The fraction guard catches a chain that answers "not found" for everything
+        // (wrong RPC or registry); it is meaningless on a node with a handful of
+        // streams, where deleting one channel already exceeds any threshold.
         const fraction = streamIds.length > 0 ? deleted.length / streamIds.length : 0
-        if (fraction > this.config.abortFractionPercent / 100) {
+        if (streamIds.length >= this.config.abortMinStreams && fraction > this.config.abortFractionPercent / 100) {
             logger.warn('Orphan sweep aborted: suspiciously many streams look deleted', {
                 deleted: deleted.length,
                 total: streamIds.length,
-                abortFractionPercent: this.config.abortFractionPercent
+                abortFractionPercent: this.config.abortFractionPercent,
+                abortMinStreams: this.config.abortMinStreams
             })
             return
         }
