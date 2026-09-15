@@ -7,10 +7,11 @@
 #   ./install.sh
 #
 # It asks for what only you can provide (a key, a hostname, the cluster shape),
-# validates each answer, does the rest (config, image, on-chain preparation,
-# bring-up, HTTPS), and only continues past funding and cross-machine firewall
-# once it has verified them on-chain / on the wire. It pulls the prebuilt image,
-# falling back to building from source only when a full source tree is present.
+# validates each answer, does the rest (config, image, tunnel, on-chain
+# preparation, bring-up, HTTPS), and only continues past funding and the
+# cross-machine tunnel once it has verified them on-chain / on the wire. It
+# pulls the prebuilt image, falling back to building from source only when a
+# full source tree is present.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -18,6 +19,10 @@ RPCS='[ { "url": "https://polygon.drpc.org" }, { "url": "https://polygon-bor-rpc
 RPC0="https://polygon.drpc.org"
 MIN_WEI="20000000000000000"   # 0.02 POL: enough for the assignment stream + registration on Polygon
 CONFIG_IN_CONTAINER="/home/streamr/.streamr/config/pombo-node.json"
+# Cassandra names; set them in the environment to join an existing database under other names.
+KEYSPACE="${CASSANDRA_KEYSPACE:-pombo_storage}"
+CLUSTER_NAME="${CASSANDRA_CLUSTER_NAME:-pombo-storage}"
+WG_PREFIX="10.10.0"           # machine i is $WG_PREFIX.(i+1) on the tunnel
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ask() { local prompt="$1" default="${2:-}" reply; read -rp "$prompt " reply; echo "${reply:-$default}"; }
@@ -51,6 +56,14 @@ ask_ip() {
         echo "Please enter a valid IPv4 address (e.g. 203.0.113.10)." >&2
     done
 }
+ask_wgkey() {
+    local prompt="$1" reply
+    while true; do
+        read -rp "$prompt " reply
+        if [[ "$reply" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then echo "$reply"; return 0; fi
+        echo "That is not a WireGuard public key (44 base64 characters ending in '=')." >&2
+    done
+}
 # TCP reachability without extra tools: bash's /dev/tcp, guarded so a closed port never aborts the script.
 tcp_open() { timeout 5 bash -c "cat < /dev/null > /dev/tcp/$1/$2" 2>/dev/null; }
 
@@ -62,7 +75,7 @@ $DOCKER compose version >/dev/null 2>&1 || { echo "The docker compose plugin is 
 
 say "Pombo storage node installer"
 
-# This machine's public IP, used to sanity-check DNS and (in a cluster) to broadcast Cassandra.
+# This machine's public IP, used to sanity-check DNS.
 DETECTED_IP="$(curl -fsSL --max-time 8 https://api.ipify.org 2>/dev/null || true)"
 
 # --- the key ---
@@ -105,34 +118,67 @@ SIGNED_READS=true
 ask_yn 'Require signed reads on gated channels?' y || SIGNED_READS=false
 
 # --- cluster shape ---
-# A cluster is N machines sharing one key and one replicated Cassandra. Each node
-# has a distinct index and stores only its share of stream-partitions (splitting
-# overlay/CPU load), but every node keeps a full Cassandra copy so any node can
-# serve any read. The overlay node id derives from the IP, so sharing one key
-# across machines is safe.
+# A cluster is N machines sharing one key and one Cassandra ring replicated to
+# every machine over a WireGuard tunnel. By default every node stores every
+# stream (full redundancy: a machine being down loses nothing). The advanced
+# split mode gives each node a distinct index so it stores only its share of
+# stream-partitions (less overlay load per node, but a partition's history is
+# not captured while its node is down). The overlay node id derives from the
+# IP, so sharing one key across machines is safe.
 CLUSTER=false
 CLUSTER_SIZE=1
-NODE_INDEX=0
+ORDINAL=0
 IS_SEED=true
-SEED_IP=""
-THIS_PUBLIC_IP=""
+NODE_CLUSTER_SIZE=1
+NODE_INDEX=0
+WG_IP=""
+WG_MTU=1280
+PEERS=()          # <peer-wg-ip>,<peer-public-ip>,<peer-public-key>
 if ask_yn 'Is this node part of a MULTI-MACHINE cluster?' n; then
     CLUSTER=true
-    CLUSTER_SIZE="$(ask_int 'How many nodes in the cluster (total machines)?' 2 64 2)"
-    if ask_yn 'Is this the FIRST node (the seed, index 0)?' y; then
-        IS_SEED=true
-    else
-        IS_SEED=false
-        if (( CLUSTER_SIZE == 2 )); then
-            NODE_INDEX=1
-            say "A 2-node cluster has one joining node, so this node's index is 1."
-        else
-            NODE_INDEX="$(ask_int "This node's index (1..$((CLUSTER_SIZE-1))):" 1 "$((CLUSTER_SIZE-1))")"
-        fi
-        SEED_IP="$(ask_ip 'Public IP of the first node (the Cassandra seed):')"
+    CLUSTER_SIZE="$(ask_int 'How many machines in the cluster?' 2 64 2)"
+    ORDINAL="$(ask_int "This machine's number (0 = the first machine; 1..$((CLUSTER_SIZE-1)) = the others):" 0 "$((CLUSTER_SIZE-1))" 0)"
+    (( ORDINAL == 0 )) || IS_SEED=false
+    say "By default every node stores every stream, so any machine being down loses nothing."
+    say "Advanced: split the stream-partitions between the nodes instead (each captures 1/$CLUSTER_SIZE,"
+    say "less overlay load per node, but a partition's history is lost while its node is down)."
+    if ask_yn 'Split the partitions between the nodes (advanced)?' n; then
+        NODE_CLUSTER_SIZE="$CLUSTER_SIZE"
+        NODE_INDEX="$ORDINAL"
     fi
-    THIS_PUBLIC_IP="$(ask_ip "This machine's public IP:" "$DETECTED_IP")"
-    [[ "$IS_SEED" == true ]] && SEED_IP="$THIS_PUBLIC_IP"
+    WG_IP="$WG_PREFIX.$((ORDINAL+1))"
+
+    # --- the tunnel: keys first, so every machine can be asked for its peers' keys ---
+    say "The machines talk over a WireGuard tunnel (wg0, $WG_PREFIX.0/24); Cassandra is reachable only"
+    say "through it. This machine is $WG_IP. Open UDP 51820 to the internet on your cloud firewall /"
+    say "security list for every machine; the installer opens it on the host firewall itself."
+    chmod +x wg-setup.sh
+    PUBKEY="$(./wg-setup.sh key)"
+    say "This machine's WireGuard public key (the other machines' installers will ask for it):"
+    echo "  $PUBKEY"
+    say "Run the installer on every other machine up to this point, then enter their details here."
+    for (( i = 0; i < CLUSTER_SIZE; i++ )); do
+        (( i == ORDINAL )) && continue
+        pip="$(ask_ip "Machine $i ($WG_PREFIX.$((i+1))) public IP:")"
+        pkey="$(ask_wgkey "Machine $i WireGuard public key:")"
+        PEERS+=("$WG_PREFIX.$((i+1)),$pip,$pkey")
+    done
+    WG_MTU="$(ask_int 'Tunnel MTU (1280 works on any path; up to 1420 when the path carries 1500-byte packets):' 1200 1420 1280)"
+    say "Bringing the tunnel up..."
+    ./wg-setup.sh up "$WG_IP" "$WG_MTU" "${PEERS[@]}"
+    for p in "${PEERS[@]}"; do
+        pwg="${p%%,*}"
+        say "Checking the tunnel to $pwg (the other machine must have reached this step too)..."
+        r=""
+        until ping -c 1 -W 3 -M do -s $((WG_MTU - 28)) "$pwg" >/dev/null 2>&1; do
+            say "No answer from $pwg through the tunnel yet. Check that UDP 51820 is open on both cloud"
+            say "firewalls, that the public IPs and keys are right, and that the other installer has"
+            say "brought its tunnel up (this check needs the other machine past the same step)."
+            read -rp "Press Enter to re-check (or type 'skip' to proceed anyway): " r
+            [[ "$r" == skip ]] && break
+        done
+        [[ "$r" == skip ]] || say "Tunnel to $pwg is up (MTU $WG_MTU verified)."
+    done
 fi
 
 # --- the network block (public node advertises its hostname; a local one asks for no public port) ---
@@ -143,6 +189,13 @@ else
 fi
 
 # --- write the config ---
+# The node reaches its own Cassandra by service name and the peers' by tunnel
+# address (the driver discovers the whole ring from any of them). Retention
+# deletes replicate through Cassandra, so only machine 0 runs it.
+HOSTS='"cassandra"'
+for p in ${PEERS[@]+"${PEERS[@]}"}; do HOSTS="$HOSTS, \"${p%%,*}\""; done
+RETENTION=true
+(( ORDINAL == 0 )) || RETENTION=false
 mkdir -p config
 cat > config/pombo-node.json <<EOF
 {
@@ -156,25 +209,32 @@ cat > config/pombo-node.json <<EOF
     "httpServer": { "port": 8002 },
     "plugins": {
         "storage": {
-            "cassandra": { "hosts": ["cassandra"], "username": "", "password": "", "keyspace": "streamr", "datacenter": "datacenter1" },
-            "storageConfig": { "refreshInterval": 600000 },
-            "cluster": { "clusterSize": $CLUSTER_SIZE, "myIndexInCluster": $NODE_INDEX },
+            "cassandra": { "hosts": [$HOSTS], "username": "", "password": "", "keyspace": "$KEYSPACE", "datacenter": "dc1" },
+            "storageConfig": { "refreshInterval": 60000 },
+            "cluster": { "clusterSize": $NODE_CLUSTER_SIZE, "myIndexInCluster": $NODE_INDEX },
+            "retention": { "enabled": $RETENTION, "abortFractionPercent": 80 },
             "signedReads": { "enabled": $SIGNED_READS }
         }
     }
 }
 EOF
 chmod 600 config/pombo-node.json
-say "Wrote config/pombo-node.json (clusterSize=$CLUSTER_SIZE, myIndexInCluster=$NODE_INDEX)"
+say "Wrote config/pombo-node.json (clusterSize=$NODE_CLUSTER_SIZE, myIndexInCluster=$NODE_INDEX, retention=$RETENTION)"
 
 # --- compose files and .env ---
 COMPOSE="-f docker-compose.yml"
 [[ "$CLUSTER" == true ]] && COMPOSE="$COMPOSE -f docker-compose.cluster.yml"
+SEEDS=""
+for (( i = 0; i < CLUSTER_SIZE; i++ )); do SEEDS="$SEEDS${SEEDS:+,}$WG_PREFIX.$((i+1))"; done
 {
     [[ -n "$HOSTNAME_PUBLIC" ]] && echo "POMBO_NODE_DOMAIN=$HOSTNAME_PUBLIC"
+    echo "POMBO_NODE_ORDINAL=$ORDINAL"
+    echo "CASSANDRA_CLUSTER_NAME=$CLUSTER_NAME"
+    echo "CASSANDRA_KEYSPACE=$KEYSPACE"
+    echo "CASSANDRA_RACK=rack$((ORDINAL+1))"
     if [[ "$CLUSTER" == true ]]; then
-        echo "THIS_PUBLIC_IP=$THIS_PUBLIC_IP"
-        echo "CASSANDRA_SEEDS=$SEED_IP"
+        echo "WG_IP=$WG_IP"
+        echo "CASSANDRA_SEEDS=$SEEDS"
     fi
 } > .env
 
@@ -193,29 +253,15 @@ else
     exit 1
 fi
 
-# --- cluster: the peers must reach each other's Cassandra ports before the ring can form ---
-if [[ "$CLUSTER" == true ]]; then
-    say "Cluster networking: Cassandra ports 7000 and 9042 must be reachable between the cluster"
-    say "machines, each allowed only from the other machines' IPs (a /32 rule per peer), NEVER from"
-    say "0.0.0.0/0 (Cassandra has no authentication here)."
-    if [[ "$IS_SEED" == true ]]; then
-        say "This is the seed; open 7000 and 9042 to the other machines' IPs. They will verify it when they join."
-        read -rp "Press Enter once 7000 and 9042 are open to the other machines... " _
-    else
-        say "Checking that the seed ($SEED_IP) is reachable on 7000 and 9042 (start the seed first)..."
-        until tcp_open "$SEED_IP" 7000 && tcp_open "$SEED_IP" 9042; do
-            say "Cannot reach $SEED_IP on 7000/9042 yet. Open both from this machine's IP on the seed's"
-            say "firewall (and this machine's, for the return path), and make sure the seed is running."
-            read -rp "Press Enter to re-check (or type 'skip' to proceed anyway): " r
-            [[ "$r" == skip ]] && break
-        done
-        [[ -n "${r:-}" && "$r" == skip ]] || say "Seed reachable on 7000 and 9042."
-    fi
-fi
+# Non-interactive container commands read from /dev/null: `compose run` and
+# `compose exec` attach stdin by default and would swallow answers typed ahead
+# of the next prompt.
+crun()  { $DOCKER compose $COMPOSE run --rm --no-deps -T "$@" </dev/null; }
+cexec() { $DOCKER compose $COMPOSE exec -T "$@" </dev/null; }
 
 # --- derive the node address from the key (a local operation, no funds needed) ---
 say "Reading the node address from the key..."
-ADDRESS="$($DOCKER compose $COMPOSE run --rm --no-deps -T node node dist/bin/streamr-storage-node-register.js --print-address --config "$CONFIG_IN_CONTAINER" 2>/dev/null | tr -d '[:space:]')"
+ADDRESS="$(crun node node dist/bin/streamr-storage-node-register.js --print-address --config "$CONFIG_IN_CONTAINER" 2>/dev/null | tr -d '[:space:]')"
 [[ "$ADDRESS" =~ ^0x[0-9a-fA-F]{40}$ ]] || {
     echo "Could not derive the node address. Run without hiding errors to see why:"
     echo "  $DOCKER compose $COMPOSE run --rm --no-deps node node dist/bin/streamr-storage-node-register.js --print-address --config $CONFIG_IN_CONTAINER"
@@ -226,7 +272,7 @@ say "This node's address is: $ADDRESS"
 wait_for_cassandra() {
     say "Waiting for Cassandra to answer..."
     for _ in $(seq 1 30); do
-        $DOCKER compose $COMPOSE exec -T cassandra cqlsh -e "DESCRIBE KEYSPACES" >/dev/null 2>&1 && return 0
+        cexec cassandra cqlsh -e "DESCRIBE KEYSPACES" >/dev/null 2>&1 && return 0
         sleep 5
     done
     echo "Cassandra did not become ready in time. Check: $DOCKER compose logs cassandra"; exit 1
@@ -239,7 +285,7 @@ wait_for_funds() {
     say "Fund this address with about 1 POL from any wallet: $addr"
     say "It pays once for creating the node's assignment stream and registering it."
     while true; do
-        out="$($DOCKER compose $COMPOSE run --rm --no-deps -T -e RPC="$RPC0" -e ADDR="$addr" -e MINWEI="$MIN_WEI" node node -e "$js" 2>/dev/null | tr -d '[:space:]')"
+        out="$(crun -e RPC="$RPC0" -e ADDR="$addr" -e MINWEI="$MIN_WEI" node node -e "$js" 2>/dev/null | tr -d '[:space:]')"
         case "$out" in
             OK*)  say "Balance ${out#OK} POL: funded. Continuing."; return 0 ;;
             LOW*) say "Balance ${out#LOW} POL: not enough yet." ;;
@@ -254,10 +300,25 @@ register_urls() {
     # $1 = comma-separated URLs. Creates the assignment stream and registers the URLs.
     wait_for_funds "$ADDRESS"
     say "Creating the assignment stream and registering: $1"
-    $DOCKER compose $COMPOSE run --rm --no-deps node node dist/bin/streamr-storage-node-register.js "$1" --config "$CONFIG_IN_CONTAINER"
+    crun node node dist/bin/streamr-storage-node-register.js "$1" --config "$CONFIG_IN_CONTAINER"
 }
 
 if [[ "$CLUSTER" == true ]]; then
+    # Every machine lists every machine as a seed (so any of them can restart
+    # alone), which means a joining Cassandra started before the first one
+    # would form a ring of its own: machine 0 must be up first.
+    if [[ "$IS_SEED" == false ]]; then
+        SEED_WG="$WG_PREFIX.1"
+        say "Checking that machine 0's Cassandra ($SEED_WG:7000) is up through the tunnel (finish machine 0 first)..."
+        r=""
+        until tcp_open "$SEED_WG" 7000; do
+            say "Cannot reach $SEED_WG on 7000 yet. Bring machine 0 up first (its installer starts Cassandra)."
+            read -rp "Press Enter to re-check (or type 'skip' to proceed anyway): " r
+            [[ "$r" == skip ]] && break
+        done
+        [[ "$r" == skip ]] || say "Machine 0's Cassandra is reachable."
+    fi
+
     # Bring up Cassandra on its own first, so the ring and schema settle before the node starts.
     say "Starting Cassandra..."
     $DOCKER compose $COMPOSE up -d cassandra
@@ -265,43 +326,43 @@ if [[ "$CLUSTER" == true ]]; then
 
     if [[ "$IS_SEED" == true ]]; then
         say "Creating the replicated keyspace (replication factor $CLUSTER_SIZE, every node a full copy)..."
-        sed "s/'datacenter1': 2/'datacenter1': $CLUSTER_SIZE/" cassandra/init-cluster.cql > /tmp/pombo-init-cluster.cql
+        sed "s/'dc1': 2/'dc1': $CLUSTER_SIZE/; s/pombo_storage/$KEYSPACE/g" cassandra/init-cluster.cql > /tmp/pombo-init-cluster.cql
         $DOCKER compose $COMPOSE cp /tmp/pombo-init-cluster.cql cassandra:/tmp/init-cluster.cql
-        $DOCKER compose $COMPOSE exec -T cassandra cqlsh -f /tmp/init-cluster.cql
+        cexec cassandra cqlsh -f /tmp/init-cluster.cql
         rm -f /tmp/pombo-init-cluster.cql
     else
         say "Waiting for the Cassandra ring to reach $CLUSTER_SIZE nodes Up/Normal..."
         RING=""
         for _ in $(seq 1 60); do
-            UN="$($DOCKER compose $COMPOSE exec -T cassandra nodetool status 2>/dev/null | grep -cE '^UN[[:space:]]' || true)"
+            UN="$(cexec cassandra nodetool status 2>/dev/null | grep -cE '^UN[[:space:]]' || true)"
             if [[ "${UN:-0}" -ge "$CLUSTER_SIZE" ]]; then RING=1; break; fi
             sleep 5
         done
         [[ -n "$RING" ]] || {
-            echo "The ring did not reach $CLUSTER_SIZE Up/Normal nodes. Check that 7000/9042 are open"
-            echo "between the machines, the seed IP is correct, and the seed is running, then:"
+            echo "The ring did not reach $CLUSTER_SIZE Up/Normal nodes. Check that the tunnel is up"
+            echo "(sudo wg show), that machine 0 is running, then:"
             echo "  $DOCKER compose $COMPOSE exec cassandra nodetool status"
             exit 1
         }
         say "The Cassandra ring is up. Waiting for the keyspace to replicate here..."
         for _ in $(seq 1 30); do
-            $DOCKER compose $COMPOSE exec -T cassandra cqlsh -e "USE streamr" >/dev/null 2>&1 && break
+            cexec cassandra cqlsh -e "USE $KEYSPACE" >/dev/null 2>&1 && break
             sleep 5
         done
     fi
 
     if [[ "$IS_SEED" == true ]]; then
-        say "A cluster registers every node's URL under the one shared key, once, from the seed."
+        say "A cluster registers every node's URL under the one shared key, once, from machine 0."
         DEFAULT_URL=""; [[ -n "$HOSTNAME_PUBLIC" ]] && DEFAULT_URL="https://$HOSTNAME_PUBLIC"
         URLS="$(ask 'Every node URL, comma-separated (e.g. https://node1.example.org,https://node2.example.org):' "$DEFAULT_URL")"
-        [[ -n "$URLS" ]] || { echo "At least the seed's URL is required to register the cluster."; exit 1; }
+        [[ -n "$URLS" ]] || { echo "At least machine 0's URL is required to register the cluster."; exit 1; }
         register_urls "$URLS"
     else
-        say "This joining node shares the seed's key, so the seed already created the assignment stream"
+        say "This machine shares machine 0's key, so machine 0 already created the assignment stream"
         say "and registered the URLs. No funding or registration is needed here."
     fi
 
-    say "Starting the node..."
+    say "Starting the node and the maintenance sidecar..."
     $DOCKER compose $COMPOSE up -d
 else
     # Single node: the assignment stream must exist before the node starts, and creating it
@@ -311,7 +372,7 @@ else
     else
         say "Creating the assignment stream (no hostname given, so no URL is registered yet)..."
         wait_for_funds "$ADDRESS"
-        $DOCKER compose $COMPOSE run --rm --no-deps node node dist/bin/streamr-storage-node-register.js --config "$CONFIG_IN_CONTAINER"
+        crun node node dist/bin/streamr-storage-node-register.js --config "$CONFIG_IN_CONTAINER"
     fi
     say "Starting the node and Cassandra..."
     $DOCKER compose $COMPOSE up -d
@@ -346,4 +407,10 @@ else
     say "config, register the URL, and start Caddy (see HOW_TO_INSTALL.md)."
 fi
 
-say "Retention runs automatically. See POMBO.md to tune it."
+if [[ "$CLUSTER" == true ]]; then
+    say "Firewall summary: 80/tcp, 443/tcp, 32200/tcp and 51820/udp open to the internet; nothing else."
+    say "Cassandra (7000/9042) is reachable only through the tunnel. Repair and garbage collection run"
+    say "in the maintenance sidecar; retention runs on machine 0 only."
+else
+    say "Retention runs automatically. See POMBO.md to tune it."
+fi

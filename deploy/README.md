@@ -110,9 +110,7 @@ it into the container, or with any cqlsh that reaches the database.
 
 ## More than one node
 
-The storage plugin's `cluster` section (`clusterSize`, `myIndexInCluster`)
-lets several nodes share one Cassandra cluster and split the streams among
-them; Cassandra replication then keeps every node's data available on the
-others. That setup is outside this compose file: it needs a Cassandra
-cluster with `NetworkTopologyStrategy` replication and the `init.cql`
-adjusted accordingly.
+Several machines can share one node identity and one Cassandra ring over a
+WireGuard tunnel, so a machine being down loses no data and any machine
+serves any read. The installer sets it up; the model and the manual
+procedure are in [CLUSTER.md](CLUSTER.md).

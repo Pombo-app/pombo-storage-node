@@ -1,12 +1,12 @@
--- Schema for a Pombo storage CLUSTER (>1 node) on a replicated Cassandra.
+-- Schema for a Pombo storage CLUSTER (>1 machine) on a replicated Cassandra.
 -- Apply once, on the first node only, after all Cassandra nodes have joined
--- the ring. Replication factor 2 means every node keeps a full copy, so any
--- node can serve any partition's reads.
+-- the ring. The replication factor equals the number of machines, so every
+-- node keeps a full copy and any node can serve any read (install.sh sets it).
 
-CREATE KEYSPACE IF NOT EXISTS streamr
-    WITH replication = { 'class': 'NetworkTopologyStrategy', 'datacenter1': 2 };
+CREATE KEYSPACE IF NOT EXISTS pombo_storage
+    WITH replication = { 'class': 'NetworkTopologyStrategy', 'dc1': 2 };
 
-USE streamr;
+USE pombo_storage;
 
 CREATE TABLE IF NOT EXISTS bucket (
     stream_id   text,

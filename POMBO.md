@@ -106,7 +106,9 @@ deletion otherwise) or if a suspiciously large fraction of streams look
 deleted, and holds a grace period before removing anything.
 
 In a cluster the deletes replicate through Cassandra, so retention runs on
-**one node only** — the node with `myIndexInCluster: 0`.
+**one node only**: the installer leaves `retention.enabled` true on the
+first machine and sets it false on the others (it also never runs on a node
+whose `myIndexInCluster` is not 0).
 
 ### `GET /capabilities`
 
@@ -151,9 +153,10 @@ Storage plugin keys added to the upstream ones:
 | `bucket.checkFullBucketsTimeout` | 250 | ms between checks for full buckets |
 | `batch.logErrors` | true | log failed batch inserts (upstream retries them silently) |
 | `signedReads.enabled` | true | require signed reads on gated channels |
-| `retention.enabled` | true | prune stored data past each stream's storageDays (runs on cluster node 0) |
+| `retention.enabled` | true | prune stored data past each stream's storageDays (one machine per cluster) |
 | `retention.intervalHours` | 6 | how often retention runs |
 | `retention.graceDays` | 7 | hold before deleting an on-chain-deleted stream's data |
+| `retention.abortFractionPercent` | 30 | skip the orphan sweep when more than this share of streams look deleted on-chain, a sign of a misconfigured RPC or registry; the installer writes 80, since a node that has had many channels deleted legitimately crosses 30 |
 
 `client.cache.maxAge` in the node config governs how long permission
 lookups are cached; the example config sets 10 minutes so a revoked
