@@ -147,6 +147,12 @@ describe('signed reads', () => {
         await signedRead(createApp(true), `${BASE}-1`, { count: '5' }, 503)
     })
 
+    it('answers 404, not 503, for a stream that no longer exists on chain', async () => {
+        client.getStreamMetadata.mockRejectedValue(Object.assign(new Error('Stream not found'), { code: 'STREAM_NOT_FOUND' }))
+        await read(createApp(true), `${BASE}-1`, { count: '5' }).expect(404)
+        await signedRead(createApp(true), `${BASE}-1`, { count: '5' }, 404)
+    })
+
     describe('non-gated private streams (e.g. a DM inbox)', () => {
         const DM = '0x1234567890123456789012345678901234567890/Pombo-DM-1'
 
