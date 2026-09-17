@@ -69,6 +69,12 @@ export const createSignedReadGuard = (
         try {
             gate = await gates.getGate(streamId)
         } catch (err) {
+            // A stream deleted on chain is a final answer, not a chain outage:
+            // clients count 5xx against the node's health, so say 404.
+            if ((err as { code?: string }).code === 'STREAM_NOT_FOUND') {
+                res.status(404).json({ error: 'Stream not found' })
+                return
+            }
             logger.warn('Could not read gate, refusing read', { streamId, err })
             res.status(503).json({ error: 'Cannot verify access right now' })
             return
@@ -94,7 +100,9 @@ export const createSignedReadGuard = (
             accessCheck = (user) => gates.hasSubscribe(streamId, user)
         } else {
             const info = gate
-            accessCheck = async (user) => (user === info.owner) || await gates.isModerator(info.address, user) || await gates.hasAccess(info.address, user)
+            accessCheck = async (user) => (user === info.owner)
+                || await gates.isModerator(info.address, user)
+                || await gates.hasAccess(info.address, user)
         }
         let user: EthereumAddress
         try {
