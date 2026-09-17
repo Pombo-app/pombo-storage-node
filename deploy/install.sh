@@ -228,6 +228,9 @@ cat > config/pombo-node.json <<EOF
 }
 EOF
 chmod 600 config/pombo-node.json
+# The node runs as uid 1000 inside the image; when the installer runs as root the
+# file must still be readable there.
+chown 1000:1000 config/pombo-node.json 2>/dev/null || true
 say "Wrote config/pombo-node.json (clusterSize=$NODE_CLUSTER_SIZE, myIndexInCluster=$NODE_INDEX, retention=$RETENTION)"
 
 # --- compose files and .env ---
@@ -276,7 +279,7 @@ cexec() { $DOCKER compose $COMPOSE exec -T "$@" </dev/null; }
 
 # --- derive the node address from the key (a local operation, no funds needed) ---
 say "Reading the node address from the key..."
-ADDRESS="$(crun node node dist/bin/streamr-storage-node-register.js --print-address --config "$CONFIG_IN_CONTAINER" 2>/dev/null | tr -d '[:space:]')"
+ADDRESS="$(crun node node dist/bin/streamr-storage-node-register.js --print-address --config "$CONFIG_IN_CONTAINER" 2>/dev/null | tr -d '[:space:]' || true)"
 [[ "$ADDRESS" =~ ^0x[0-9a-fA-F]{40}$ ]] || {
     echo "Could not derive the node address. Run without hiding errors to see why:"
     echo "  $DOCKER compose $COMPOSE run --rm --no-deps node node dist/bin/streamr-storage-node-register.js --print-address --config $CONFIG_IN_CONTAINER"
