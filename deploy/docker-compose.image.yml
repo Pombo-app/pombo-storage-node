@@ -1,7 +1,9 @@
 # Use the prebuilt node image from GHCR instead of building from source.
 #   docker compose -f docker-compose.yml -f docker-compose.image.yml pull
 #   docker compose -f docker-compose.yml -f docker-compose.image.yml up -d
+# Pin a release with POMBO_NODE_TAG in .env (e.g. v103.3.1-pombo.1); the
+# default follows latest.
 services:
   node:
-    image: ghcr.io/pombo-app/pombo-storage-node:latest
+    image: ghcr.io/pombo-app/pombo-storage-node:${POMBO_NODE_TAG:-latest}
     pull_policy: always
