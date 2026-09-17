@@ -117,6 +117,15 @@ done
 SIGNED_READS=true
 ask_yn 'Require signed reads on gated channels?' y || SIGNED_READS=false
 
+# --- overlay port: 32200 unless another process on this machine already holds it ---
+# The port the node listens on inside the container is the one published on the
+# host and the one it advertises to the overlay, so all three must be the same.
+WS_PORT="${POMBO_WS_PORT:-32200}"
+if [[ -z "${POMBO_WS_PORT:-}" ]] && ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE ':32200$'; then
+    say "Port 32200 is already in use on this machine (another Streamr node?)."
+    WS_PORT="$(ask_int 'Overlay port for this node instead:' 1024 65535 32201)"
+fi
+
 # --- cluster shape ---
 # A cluster is N machines sharing one key and one Cassandra ring replicated to
 # every machine over a WireGuard tunnel. By default every node stores every
@@ -183,7 +192,7 @@ fi
 
 # --- the network block (public node advertises its hostname; a local one asks for no public port) ---
 if [[ -n "$HOSTNAME_PUBLIC" ]]; then
-    NETWORK="\"network\": { \"controlLayer\": { \"websocketHost\": \"$HOSTNAME_PUBLIC\", \"websocketPortRange\": { \"min\": 32200, \"max\": 32200 } } }"
+    NETWORK="\"network\": { \"controlLayer\": { \"websocketHost\": \"$HOSTNAME_PUBLIC\", \"websocketPortRange\": { \"min\": $WS_PORT, \"max\": $WS_PORT } } }"
 else
     NETWORK="\"network\": { \"controlLayer\": { \"websocketPortRange\": null } }"
 fi
@@ -228,6 +237,11 @@ SEEDS=""
 for (( i = 0; i < CLUSTER_SIZE; i++ )); do SEEDS="$SEEDS${SEEDS:+,}$WG_PREFIX.$((i+1))"; done
 {
     [[ -n "$HOSTNAME_PUBLIC" ]] && echo "POMBO_NODE_DOMAIN=$HOSTNAME_PUBLIC"
+    echo "POMBO_WS_PORT=$WS_PORT"
+    # Sizing, when given in the installer's environment (defaults suit a 4 GB box).
+    [[ -n "${CASSANDRA_HEAP:-}" ]] && echo "CASSANDRA_HEAP=$CASSANDRA_HEAP"
+    [[ -n "${CASSANDRA_HEAP_NEW:-}" ]] && echo "CASSANDRA_HEAP_NEW=$CASSANDRA_HEAP_NEW"
+    [[ -n "${NODE_OLD_SPACE_MB:-}" ]] && echo "NODE_OLD_SPACE_MB=$NODE_OLD_SPACE_MB"
     echo "POMBO_NODE_ORDINAL=$ORDINAL"
     echo "CASSANDRA_CLUSTER_NAME=$CLUSTER_NAME"
     echo "CASSANDRA_KEYSPACE=$KEYSPACE"
@@ -408,7 +422,7 @@ else
 fi
 
 if [[ "$CLUSTER" == true ]]; then
-    say "Firewall summary: 80/tcp, 443/tcp, 32200/tcp and 51820/udp open to the internet; nothing else."
+    say "Firewall summary: 80/tcp, 443/tcp, $WS_PORT/tcp and 51820/udp open to the internet; nothing else."
     say "Cassandra (7000/9042) is reachable only through the tunnel. Repair and garbage collection run"
     say "in the maintenance sidecar; retention runs on machine 0 only."
 else
