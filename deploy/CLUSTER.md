@@ -61,7 +61,12 @@ Placeholder values, two machines:
   pombo/103.3.1 <repo>`).
 - Firewall on each machine (cloud security list and host): `80`, `443`,
   `32200/tcp` and `51820/udp` from anywhere. Nothing else; in particular no
-  7000/9042.
+  7000/9042. When another process already holds 32200 (an operator node, say),
+  the installer asks for a different overlay port and writes it as
+  `POMBO_WS_PORT` in `.env`; open that one instead.
+- Sizing: `CASSANDRA_HEAP` / `CASSANDRA_HEAP_NEW` (default 1G / 256M) and
+  `NODE_OLD_SPACE_MB` (default 2048) in `.env`, or in the installer's
+  environment so it writes them for you.
 - A cluster key with a little POL, the same on every machine.
 - A DNS `A` record per machine pointing at its public IP.
 
@@ -78,6 +83,10 @@ Create the key and print the public key (installs `wireguard-tools`):
 ```bash
 ./wg-setup.sh key
 ```
+
+To keep a tunnel key the machine already has, put its private key in
+`/etc/wireguard/wg0.key` (mode 600) before this step; `key` then prints the
+matching public key and `up` rewrites `wg0.conf` around it.
 
 Do this on every machine, then bring the tunnel up on each, giving it its
 own tunnel IP, the MTU, and every other machine as
