@@ -18,6 +18,8 @@ RUN cd packages/node; for file in dist/bin/*.js; do ln -s "../$file" "bin/$(base
 FROM node:${NODE_VERSION}-bookworm-slim
 ARG NODE_ENV
 ENV NODE_ENV=${NODE_ENV:-production}
+ARG POMBO_NODE_VERSION
+ENV POMBO_NODE_VERSION=${POMBO_NODE_VERSION:-dev}
 RUN apt-get update && apt-get --assume-yes --no-install-recommends install \
 	curl \
 	&& apt-get clean \
