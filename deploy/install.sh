@@ -260,6 +260,17 @@ for (( i = 0; i < CLUSTER_SIZE; i++ )); do SEEDS="$SEEDS${SEEDS:+,}$WG_PREFIX.$(
 if $DOCKER compose $COMPOSE -f docker-compose.image.yml pull node >/dev/null 2>&1; then
     COMPOSE="$COMPOSE -f docker-compose.image.yml"
     say "Pulled the prebuilt node image."
+    # The concrete version comes from the image, not from the compose tag,
+    # which may be `latest`.
+    if [[ -z "${POMBO_NODE_TAG:-}" ]]; then
+        IMAGE_REF=$($DOCKER compose $COMPOSE config 2>/dev/null | sed -n 's/^ *image: *//p' | grep pombo-storage-node | head -1)
+        PULLED_VERSION=$($DOCKER image inspect "$IMAGE_REF" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+            | sed -n 's/^POMBO_NODE_VERSION=//p' | tr -d '\r')
+        if [[ -n "$PULLED_VERSION" && "$PULLED_VERSION" != "dev" && "$PULLED_VERSION" != "latest" ]]; then
+            echo "POMBO_NODE_TAG=$PULLED_VERSION" >> .env
+            say "Pinned the node image to $PULLED_VERSION in .env (edit POMBO_NODE_TAG to upgrade)."
+        fi
+    fi
 elif [[ -f ../Dockerfile.node ]]; then
     say "Prebuilt image not available; building from source (several minutes)..."
     $DOCKER compose $COMPOSE build node

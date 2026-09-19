@@ -106,7 +106,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         const purgeAuthorizer = new PurgeAuthorizer(this.streamrClient, this.gates)
         this.addHttpServerEndpoint(createPurgeEndpoint(this.cassandra, purgeAuthorizer, this.signedRequestVerifier))
         this.addHttpServerEndpoint(createStoredEndpoint(this.cassandra, this.gates, this.streamrClient, this.signedRequestVerifier))
-        this.addHttpServerEndpoint(createCapabilitiesEndpoint(signedReadsEnabled))
+        this.addHttpServerEndpoint(createCapabilitiesEndpoint(signedReadsEnabled, process.env.POMBO_NODE_VERSION ?? 'dev'))
 
         // In a cluster the deletes replicate through Cassandra, so retention runs on one node only.
         if (this.pluginConfig.retention.enabled && this.pluginConfig.cluster.myIndexInCluster === 0) {

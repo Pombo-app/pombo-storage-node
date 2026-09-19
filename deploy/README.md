@@ -98,10 +98,31 @@ creating a channel gets its history stored here.
 
 ## Upgrades
 
+Upgrading is two commands, with the same `-f` files the installer used:
+
 ```
-git pull
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.image.yml pull node
+docker compose -f docker-compose.yml -f docker-compose.image.yml up -d node
 ```
+
+The node runs the version pinned in `.env` as `POMBO_NODE_TAG`, which the
+installer wrote when it pulled, so pick the version before those two commands:
+
+```
+sed -i 's/^POMBO_NODE_TAG=.*/POMBO_NODE_TAG=v103.3.1-pombo.3/' .env
+```
+
+`GET /capabilities` reports the running `version`. Rolling back is the same
+steps with the previous tag, which is the reason to keep one: `latest` names
+no version to go back to. A node built from source instead (`git pull` and
+`docker compose up -d --build`) reports `dev`.
+
+Leaving the tag at `latest` is a choice, but it does not mean "always
+current": a running container keeps the image it started with, so the version
+changes at whatever moment you next run `up -d`, including one for an
+unrelated reason such as a certificate or Caddy change. An upgrade can also
+need a schema migration, and the node refuses to start until it is applied,
+so an unplanned jump can take the node down when you are not expecting it.
 
 Schema changes ship as files in `cassandra/`; the node refuses to start
 when a column it needs is missing and names the file to apply. Apply it
