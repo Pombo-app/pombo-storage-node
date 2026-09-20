@@ -55,6 +55,8 @@ jobs:
           context: .
           file: Dockerfile.node
           platforms: ${{ matrix.platform }}
+          build-args: |
+            POMBO_NODE_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.tag }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ env.PLATFORM_PAIR }}
           cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_PAIR }}
