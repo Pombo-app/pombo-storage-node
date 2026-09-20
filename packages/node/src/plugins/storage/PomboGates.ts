@@ -11,6 +11,12 @@ const POMBO_GATE_ABI = [
 ]
 const WIRE_IDENTITY_VISIBLE = 0
 const CACHE_TTL = 10 * 60 * 1000
+/**
+ * A refusal is remembered for seconds. The client reads before it can pay, so
+ * the node holds a fresh "no" at the moment the payment lands, and nothing
+ * can drop it from the outside.
+ */
+const DENIAL_TTL = 20 * 1000
 
 export interface GateInfo {
     address: EthereumAddress
@@ -26,6 +32,8 @@ export interface GateReader {
     /** The gate's own access rule; rejects (reverts) when the gate token is broken */
     checkAccess: (gateAddress: EthereumAddress, user: EthereumAddress) => Promise<boolean>
 }
+
+const ttlOf = (granted: boolean): number => (granted ? CACHE_TTL : DENIAL_TTL)
 
 const parsePomboDescription = (metadata: Record<string, unknown>): Record<string, unknown> | undefined => {
     const description = metadata.description
@@ -99,18 +107,21 @@ export const createEthersGateReader = (client: StreamrClient): GateReader => {
 /**
  * Resolves the Pombo gate behind any stream of a channel, with the chain
  * reads cached: the gate itself is immutable, and a ban, a new moderator or
- * an expired subscription is seen within CACHE_TTL.
+ * an expired subscription is seen within CACHE_TTL. What the chain says NO to
+ * is kept for DENIAL_TTL instead, because that is the answer that changes the
+ * moment a payment confirms.
  */
 export class PomboGates {
 
     private readonly client: StreamrClient
     private readonly gateReader: GateReader
     // streamId -> gate, or null for streams that do not belong to a gated channel
-    private readonly gateCache = new MapWithTtl<string, GateInfo | null>(() => CACHE_TTL)
-    private readonly moderatorCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
-    private readonly accessCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
-    private readonly subscribePublicCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
-    private readonly subscribeUserCache = new MapWithTtl<string, boolean>(() => CACHE_TTL)
+    private readonly gateCache = new MapWithTtl<string, GateInfo | null>(
+        (gate) => (gate !== null ? CACHE_TTL : DENIAL_TTL))
+    private readonly moderatorCache = new MapWithTtl<string, boolean>(ttlOf)
+    private readonly accessCache = new MapWithTtl<string, boolean>(ttlOf)
+    private readonly subscribePublicCache = new MapWithTtl<string, boolean>(ttlOf)
+    private readonly subscribeUserCache = new MapWithTtl<string, boolean>(ttlOf)
 
     constructor(client: StreamrClient, gateReader: GateReader = createEthersGateReader(client)) {
         this.client = client
