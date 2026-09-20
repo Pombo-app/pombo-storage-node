@@ -71,6 +71,44 @@ describe('PomboGates', () => {
         expect(gateReader.isModerator).toHaveBeenCalledTimes(1)
     })
 
+    describe('what a refusal is worth', () => {
+        beforeEach(() => {
+            jest.useFakeTimers()
+        })
+
+        afterEach(() => {
+            jest.useRealTimers()
+        })
+
+        it('asks again seconds after a refusal, so a payment is seen', async () => {
+            const user = randomEthereumAddress()
+            gateReader.checkAccess.mockResolvedValue(false)
+            expect(await gates.hasAccess(GATE, user)).toBe(false)
+            jest.advanceTimersByTime(21 * 1000)
+            gateReader.checkAccess.mockResolvedValue(true)
+            expect(await gates.hasAccess(GATE, user)).toBe(true)
+            expect(gateReader.checkAccess).toHaveBeenCalledTimes(2)
+        })
+
+        it('keeps a grant for the full window', async () => {
+            const user = randomEthereumAddress()
+            gateReader.checkAccess.mockResolvedValue(true)
+            expect(await gates.hasAccess(GATE, user)).toBe(true)
+            jest.advanceTimersByTime(9 * 60 * 1000)
+            expect(await gates.hasAccess(GATE, user)).toBe(true)
+            expect(gateReader.checkAccess).toHaveBeenCalledTimes(1)
+        })
+
+        it('spares the chain between two refusals in the same breath', async () => {
+            const user = randomEthereumAddress()
+            gateReader.checkAccess.mockResolvedValue(false)
+            await gates.hasAccess(GATE, user)
+            jest.advanceTimersByTime(1000)
+            await gates.hasAccess(GATE, user)
+            expect(gateReader.checkAccess).toHaveBeenCalledTimes(1)
+        })
+    })
+
     describe('metadata parsing', () => {
         it('reads the gate from the Pombo description', () => {
             expect(parseGateAddress(gatedMetadata(GATE))).toBe(GATE)
