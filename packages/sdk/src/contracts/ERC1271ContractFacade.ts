@@ -11,7 +11,13 @@ export const SUCCESS_MAGIC_VALUE = '0x1626ba7e' // Magic value for success as de
 
 export type CacheKey = BrandedString<string>
 
-const CACHE_TTL = 10 * 60 * 1000 // 10 minutes
+const CACHE_TTL = 10 * 60 * 1000
+/**
+ * A refusal is remembered for seconds. An account publishes the moment it pays
+ * its way past a gate, and a held "no" drops everything it writes until the
+ * entry expires.
+ */
+const DENIAL_TTL = 20 * 1000 // 10 minutes
 
 const signingUtil = new EcdsaSecp256k1Evm()
 
@@ -23,7 +29,8 @@ function formCacheKey(contractAddress: EthereumAddress, signerUserId: UserID): C
 export class ERC1271ContractFacade {
 
     private readonly contractsByAddress: Mapping<EthereumAddress, ERC1271Contract>
-    private readonly publisherCache = new MapWithTtl<CacheKey, boolean>(() => CACHE_TTL)
+    private readonly publisherCache = new MapWithTtl<CacheKey, boolean>(
+        (isValid) => (isValid ? CACHE_TTL : DENIAL_TTL))
 
     constructor(
         contractFactory: ContractFactory,
