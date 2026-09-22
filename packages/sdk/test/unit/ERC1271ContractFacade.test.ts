@@ -75,6 +75,40 @@ describe('ERC1271ContractFacade', () => {
         expect(contractOne.isValidSignature).toHaveBeenCalledTimes(1)
     })
 
+    it('isValidSignature: an unreachable chain is not a verdict, and is not cached', async () => {
+        contractOne.isValidSignature.mockRejectedValue(new Error('RPC is down'))
+        const err = await contractFacade.isValidSignature(CONTRACT_ADDRESS_ONE, PAYLOAD, signature).catch((e) => e)
+        expect(err.code).toEqual('CHAIN_UNAVAILABLE')
+        await contractFacade.isValidSignature(CONTRACT_ADDRESS_ONE, PAYLOAD, signature).catch(() => {})
+        expect(contractOne.isValidSignature).toHaveBeenCalledTimes(2)
+    })
+
+    it('isValidSignature: an invalid result is re-checked within seconds', async () => {
+        jest.useFakeTimers()
+        try {
+            contractOne.isValidSignature.mockResolvedValue('0xaaaaaaaa')
+            await contractFacade.isValidSignature(CONTRACT_ADDRESS_ONE, PAYLOAD, signature)
+            jest.advanceTimersByTime(30 * 1000)
+            await contractFacade.isValidSignature(CONTRACT_ADDRESS_ONE, PAYLOAD, signature)
+            expect(contractOne.isValidSignature).toHaveBeenCalledTimes(2)
+        } finally {
+            jest.useRealTimers()
+        }
+    })
+
+    it('isValidSignature: a valid result outlives that', async () => {
+        jest.useFakeTimers()
+        try {
+            contractOne.isValidSignature.mockResolvedValue(SUCCESS_MAGIC_VALUE)
+            await contractFacade.isValidSignature(CONTRACT_ADDRESS_ONE, PAYLOAD, signature)
+            jest.advanceTimersByTime(30 * 1000)
+            await contractFacade.isValidSignature(CONTRACT_ADDRESS_ONE, PAYLOAD, signature)
+            expect(contractOne.isValidSignature).toHaveBeenCalledTimes(1)
+        } finally {
+            jest.useRealTimers()
+        }
+    })
+
     it('differentiates between different contracts based on contract address', async () => {
         contractOne.isValidSignature.mockResolvedValue(SUCCESS_MAGIC_VALUE)
         contractTwo.isValidSignature.mockResolvedValue('0xaaaaaaaa')

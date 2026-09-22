@@ -32,6 +32,12 @@ export class SignatureValidator {
         try {
             success = await this.validate(streamMessage)
         } catch (err) {
+            // A failure to reach the chain is not a verdict on the signature,
+            // and callers that drop invalid messages must be able to tell the
+            // two apart.
+            if (err instanceof StreamrClientError) {
+                throw err
+            }
             // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
             throw new StreamrClientError(`An error occurred during address recovery from signature: ${err}`, 'INVALID_SIGNATURE', streamMessage)
         }

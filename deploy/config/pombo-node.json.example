@@ -7,8 +7,7 @@
         "contracts": {
             "rpcs": [
                 { "url": "https://polygon.drpc.org" },
-                { "url": "https://polygon-bor-rpc.publicnode.com" },
-                { "url": "https://rpc.ankr.com/polygon" }
+                { "url": "https://polygon-bor-rpc.publicnode.com" }
             ],
             "rpcQuorum": 1
         },

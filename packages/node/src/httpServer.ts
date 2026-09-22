@@ -48,7 +48,10 @@ export const startServer = async (
     const app = express()
     app.use(cors({
         origin: true, // Access-Control-Allow-Origin: request origin. The default '*' is invalid if credentials included.
-        credentials: true // Access-Control-Allow-Credentials: true
+        credentials: true, // Access-Control-Allow-Credentials: true
+        // Signed reads carry a custom header, so every one of them is preceded
+        // by a preflight. Without this the browser default is a few seconds.
+        maxAge: 600
     }))
     endpoints.forEach((endpoint: Endpoint) => {
         const handlers = [createAuthenticatorMiddleware(endpoint.apiAuthentication)].concat(endpoint.requestHandlers)

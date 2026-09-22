@@ -44,7 +44,7 @@ export class IngestValidator {
             await this.client.validateMessage(msg)
         } catch (err: any) {
             if (DEFINITIVE_REJECTIONS.has(err?.code)) {
-                return this.reject(msg, err.code)
+                return this.reject(msg, err.code, this.signerOf(msg))
             }
             logger.warn('Could not validate message, storing it', {
                 streamId: msg.getStreamId(),
@@ -89,6 +89,19 @@ export class IngestValidator {
             return { store: true }
         }
         return this.reject(msg, 'READ_ONLY', signer)
+    }
+
+    /**
+     * Who signed, for the log line. In a gated channel the publisher is the
+     * gate contract, the same for every member, so without this a rejection
+     * does not say whose message was dropped.
+     */
+    private signerOf(msg: StreamMessage): EthereumAddress | undefined {
+        try {
+            return this.client.getMessageSigner(msg)
+        } catch {
+            return undefined
+        }
     }
 
     private reject(msg: StreamMessage, reason: string, signer?: EthereumAddress): IngestVerdict {
