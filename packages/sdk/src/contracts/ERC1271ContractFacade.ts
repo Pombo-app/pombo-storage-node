@@ -1,6 +1,7 @@
 import { BrandedString, EthereumAddress, EcdsaSecp256k1Evm, MapWithTtl, toUserId, UserID } from '@streamr/utils'
 import { Lifecycle, scoped } from 'tsyringe'
 import { RpcProviderSource } from '../RpcProviderSource'
+import { StreamrClientError } from '../StreamrClientError'
 import type { IERC1271 as ERC1271Contract } from '../ethereumArtifacts/IERC1271'
 import ERC1271ContractArtifact from '../ethereumArtifacts/IERC1271Abi.json'
 import { createLazyMap, Mapping } from '../utils/Mapping'
@@ -47,8 +48,17 @@ export class ERC1271ContractFacade {
         if (cachedValue !== undefined) {
             return cachedValue
         } else {
-            const contract = await this.contractsByAddress.get(contractAddress)
-            const result = await contract.isValidSignature(signingUtil.keccakHash(payload), signature)
+            let result: string
+            try {
+                const contract = await this.contractsByAddress.get(contractAddress)
+                result = await contract.isValidSignature(signingUtil.keccakHash(payload), signature)
+            } catch (err) {
+                // Not an answer about the signature: the caller decides what an
+                // unreachable chain means, and must not read it as a refusal.
+                const reason = (err instanceof Error) ? err.message : String(err)
+                throw new StreamrClientError(
+                    `Could not ask ${contractAddress} whether the signature is valid: ${reason}`, 'CHAIN_UNAVAILABLE')
+            }
             const isValid = result === SUCCESS_MAGIC_VALUE
             this.publisherCache.set(cacheKey, isValid)
             return isValid
