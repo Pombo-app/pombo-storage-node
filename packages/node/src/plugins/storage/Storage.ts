@@ -1,5 +1,5 @@
 import { type StreamMessage, convertStreamMessageToBytes } from '@streamr/sdk'
-import { Logger, MetricsContext, RateMetric, UserID } from '@streamr/utils'
+import { Logger, MetricsContext, RateMetric, UserID, merge } from '@streamr/utils'
 import { Client, auth, tracker, types } from 'cassandra-driver'
 import { EventEmitter } from 'events'
 import merge2 from 'merge2'
@@ -55,6 +55,7 @@ export type StorageOptions = Partial<BucketManagerOptions> & {
     useTtl?: boolean
     logErrors?: boolean
     retriesIntervalMilliseconds?: number
+    fetchSize?: number
 }
 
 export class Storage extends EventEmitter {
@@ -70,13 +71,11 @@ export class Storage extends EventEmitter {
 
         const defaultOptions = {
             useTtl: false,
-            retriesIntervalMilliseconds: 500
+            retriesIntervalMilliseconds: 500,
+            fetchSize: 32
         }
 
-        this.opts = {
-            ...defaultOptions,
-            ...opts
-        }
+        this.opts = merge(defaultOptions, opts)
 
         this.cassandraClient = cassandraClient
         this.bucketManager = new BucketManager(cassandraClient, opts)
@@ -401,7 +400,7 @@ export class Storage extends EventEmitter {
         return this.cassandraClient.stream(query, queryParams, {
             prepare: true,
             // force small page sizes, otherwise gives RangeError [ERR_OUT_OF_RANGE]: The value of "offset" is out of range.
-            fetchSize: 128,
+            fetchSize: this.opts.fetchSize,
             readTimeout: 0,
         }) as Readable
     }

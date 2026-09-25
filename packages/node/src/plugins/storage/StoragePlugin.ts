@@ -41,6 +41,9 @@ export interface StoragePluginConfig extends ApiPluginConfig {
         maxBucketRecords: number
         checkFullBucketsTimeout: number
     }
+    read: {
+        fetchSize: number
+    }
     batch: {
         logErrors: boolean
     }
@@ -146,6 +149,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
             opts: {
                 useTtl: false,
                 logErrors: this.pluginConfig.batch.logErrors,
+                fetchSize: this.pluginConfig.read.fetchSize,
                 ...this.pluginConfig.bucket
             }
         })

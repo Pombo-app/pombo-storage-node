@@ -107,6 +107,20 @@
             },
             "default": {}
         },
+        "read": {
+            "type": "object",
+            "description": "Reads of stored messages",
+            "additionalProperties": false,
+            "properties": {
+                "fetchSize": {
+                    "type": "integer",
+                    "description": "Rows per page when streaming stored messages. Cassandra and the node hold a whole page in memory, so large messages (file chunks) need a small value",
+                    "minimum": 1,
+                    "default": 32
+                }
+            },
+            "default": {}
+        },
         "batch": {
             "type": "object",
             "description": "Cassandra write batching",

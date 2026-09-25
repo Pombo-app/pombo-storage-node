@@ -53,6 +53,27 @@ const createFakeClient = () => {
     return { client: { ...client, stream } as unknown as Client, queries }
 }
 
+describe('Storage range read paging', () => {
+
+    const firstPageSize = async (fetchSize?: number): Promise<number | undefined> => {
+        const { client, queries } = createFakeClient()
+        const storage = new Storage(client, { fetchSize })
+        const stream = storage.requestFrom('s1', 0, 1, 0)
+        await until(() => queries.length === 1)
+        stream.destroy()
+        storage.bucketManager.stop()
+        return queries[0].options.fetchSize
+    }
+
+    it('reads 32 rows per page by default', async () => {
+        expect(await firstPageSize()).toBe(32)
+    })
+
+    it('reads the configured number of rows per page', async () => {
+        expect(await firstPageSize(8)).toBe(8)
+    })
+})
+
 describe('Storage range reads when Cassandra fails', () => {
 
     let storage: Storage

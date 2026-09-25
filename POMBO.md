@@ -151,6 +151,7 @@ Storage plugin keys added to the upstream ones:
 | `bucket.maxBucketSize` | 8388608 | bytes per Cassandra bucket (100 MB upstream; smaller buckets keep partitions healthy under binary ingest) |
 | `bucket.maxBucketRecords` | 500000 | messages per bucket |
 | `bucket.checkFullBucketsTimeout` | 250 | ms between checks for full buckets |
+| `read.fetchSize` | 32 | rows per page when streaming stored messages (128 upstream); Cassandra and the node hold a whole page in memory, and a page of 128 file chunks is ~30 MB |
 | `batch.logErrors` | true | log failed batch inserts (upstream retries them silently) |
 | `signedReads.enabled` | true | require signed reads on gated channels |
 | `retention.enabled` | true | prune stored data past each stream's storageDays (one machine per cluster) |
