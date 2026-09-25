@@ -1,5 +1,5 @@
 import { Host, types } from 'cassandra-driver'
-import { createLocalHostPolicyFactory } from '../../../../src/plugins/storage/localHostPolicy'
+import { cassandraContactPoints, createLocalHostPolicyFactory } from '../../../../src/plugins/storage/localHostPolicy'
 
 const host = (address: string): Host => ({ address, datacenter: 'dc1' }) as unknown as Host
 
@@ -20,5 +20,16 @@ describe('createLocalHostPolicyFactory', () => {
     it('creates a separate policy for each client', async () => {
         const factory = await createLocalHostPolicyFactory(['cassandra', '10.10.0.2'], 'dc1')
         expect(factory()).not.toBe(factory())
+    })
+})
+
+describe('cassandraContactPoints', () => {
+
+    it('contacts only the local Cassandra when queries are pinned to it', () => {
+        expect(cassandraContactPoints(['cassandra', '10.10.0.2'], true)).toEqual(['cassandra'])
+    })
+
+    it('contacts every listed host otherwise', () => {
+        expect(cassandraContactPoints(['cassandra', '10.10.0.2'], false)).toEqual(['cassandra', '10.10.0.2'])
     })
 })

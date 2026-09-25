@@ -154,7 +154,7 @@ Storage plugin keys added to the upstream ones:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `cassandra.pinToLocal` | true | coordinate every query on the first entry of `cassandra.hosts`, the Cassandra on this machine; the other entries (peers, by their rpc address) stay contact points only. Upstream spreads queries over the whole datacenter, so one struggling Cassandra stalls every node. With it on, a node whose local Cassandra is down does not start until it is back |
+| `cassandra.pinToLocal` | true | use only the first entry of `cassandra.hosts`, the Cassandra on this machine, as contact point and coordinator; the other entries (peers, by their rpc address) are excluded. Upstream spreads queries over the whole datacenter, so one struggling Cassandra stalls every node. With it on, a node whose local Cassandra is down does not start until it is back |
 | `bucket.maxBucketSize` | 8388608 | bytes per Cassandra bucket (100 MB upstream; smaller buckets keep partitions healthy under binary ingest) |
 | `bucket.maxBucketRecords` | 500000 | messages per bucket |
 | `bucket.checkFullBucketsTimeout` | 250 | ms between checks for full buckets |
