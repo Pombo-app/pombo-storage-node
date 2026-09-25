@@ -116,6 +116,17 @@ In a cluster the deletes replicate through Cassandra, so retention runs on
 first machine and sets it false on the others (it also never runs on a node
 whose `myIndexInCluster` is not 0).
 
+### Cassandra watchdog
+
+Every 30 seconds the node runs a trivial query. If for two minutes every one
+of them fails with no usable Cassandra host (`NoHostAvailableError`; timeouts
+do not count), the node exits and Docker restarts it with a fresh driver. The
+driver can otherwise keep a host it never reconnects to, and the node would
+stay up without storing or serving anything. After recreating the Cassandra
+container (a new container IP), expect one such restart, or restart the node
+by hand. The retention client is created for each run, so it cannot get stuck
+between runs.
+
 ### `GET /capabilities`
 
 ```json

@@ -153,6 +153,27 @@ describe('RetentionScheduler orphan sweep', () => {
     })
 })
 
+describe('RetentionScheduler Cassandra client', () => {
+
+    it('uses a new client for each run and closes it', async () => {
+        const cassandraConfig = { hosts: ['h'], username: '', password: '', keyspace: 'k', datacenter: 'd' }
+        const scheduler = new RetentionScheduler(mock<StreamrClient>(), cassandraConfig, CONFIG, 8002)
+        const clients: FakeCassandra[] = []
+        jest.spyOn(scheduler as any, 'createCassandraClient').mockImplementation(() => {
+            const c = new FakeCassandra([])
+            jest.spyOn(c, 'shutdown')
+            clients.push(c)
+            return c
+        })
+        jest.spyOn(scheduler as any, 'bucketRetention').mockResolvedValue(undefined)
+        await scheduler.runOnce()
+        await scheduler.runOnce()
+        expect(clients).toHaveLength(2)
+        expect(clients[0]).not.toBe(clients[1])
+        clients.forEach((c) => expect(c.shutdown).toHaveBeenCalledTimes(1))
+    })
+})
+
 describe('RetentionScheduler first run after a start', () => {
 
     const HOUR_MS = 60 * 60 * 1000

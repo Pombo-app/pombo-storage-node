@@ -3,6 +3,7 @@ import { EthereumAddress, Logger, MetricsContext, executeSafePromise, toEthereum
 import { Schema } from 'ajv'
 import { ApiPluginConfig, Plugin } from '../../Plugin'
 import { Storage, startCassandraStorage } from './Storage'
+import { CassandraWatchdog } from './CassandraWatchdog'
 import { IngestValidator } from './IngestValidator'
 import { LoadBalancingPolicyFactory, cassandraContactPoints, createLocalHostPolicyFactory } from './localHostPolicy'
 import { PomboGates } from './PomboGates'
@@ -76,6 +77,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
     private ingestValidator?: IngestValidator
     private signedRequestVerifier?: SignedRequestVerifier
     private retentionScheduler?: RetentionScheduler
+    private cassandraWatchdog?: CassandraWatchdog
     private messageListener?: (msg: StreamMessage) => void
 
     async start(streamrClient: StreamrClient): Promise<void> {
@@ -90,6 +92,12 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
             logger.info('Cassandra queries coordinated only by the local host', { localHost: hosts[0] })
         }
         this.cassandra = await this.startCassandraStorage(metricsContext, contactPoints, loadBalancing)
+        this.cassandraWatchdog = new CassandraWatchdog(this.cassandra.cassandraClient, {
+            checkIntervalMs: 30 * 1000,
+            maxUnreachableMs: 2 * 60 * 1000,
+            onUnreachable: () => process.exit(1)
+        })
+        this.cassandraWatchdog.start()
         this.storageConfig = await this.startStorageConfig(clusterId, assignmentStream)
         this.gates = new PomboGates(this.streamrClient)
         this.ingestValidator = new IngestValidator(this.streamrClient, metricsContext, this.gates)
@@ -135,6 +143,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
     async stop(): Promise<void> {
         const node = this.streamrClient!.getNode()
         node.removeMessageListener(this.messageListener!)
+        this.cassandraWatchdog?.stop()
         await this.retentionScheduler?.destroy()
         this.signedRequestVerifier!.destroy()
         this.gates!.destroy()

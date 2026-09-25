@@ -148,8 +148,9 @@ export class RetentionScheduler {
             logger.info('Previous retention run still in progress, skipping')
             return
         }
+        const client = this.createCassandraClient()
+        this.cassandraClient = client
         this.running = true
-        const client = this.getCassandraClient()
         try {
             logger.info('Retention: bucket retention')
             await this.bucketRetention()
@@ -159,18 +160,19 @@ export class RetentionScheduler {
             await this.orphanSweep(client)
         } finally {
             this.running = false
+            this.cassandraClient = undefined
+            await client.shutdown()
         }
     }
 
-    private getCassandraClient(): Client {
-        this.cassandraClient ??= new cassandra.Client({
+    private createCassandraClient(): Client {
+        return new cassandra.Client({
             contactPoints: [...this.cassandraConfig.hosts],
             localDataCenter: this.cassandraConfig.datacenter,
             keyspace: this.cassandraConfig.keyspace,
             authProvider: new cassandra.auth.PlainTextAuthProvider(this.cassandraConfig.username, this.cassandraConfig.password),
             ...(this.loadBalancing !== undefined ? { policies: { loadBalancing: this.loadBalancing() } } : {})
         })
-        return this.cassandraClient
     }
 
     private async bucketRetention(): Promise<void> {
@@ -343,9 +345,6 @@ export class RetentionScheduler {
 
     async destroy(): Promise<void> {
         this.stop()
-        if (this.cassandraClient !== undefined) {
-            await this.cassandraClient.shutdown()
-            this.cassandraClient = undefined
-        }
+        await this.cassandraClient?.shutdown()
     }
 }
