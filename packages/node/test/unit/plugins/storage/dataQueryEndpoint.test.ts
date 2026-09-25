@@ -169,6 +169,12 @@ describe('dataQueryEndpoint', () => {
                         error: 'Failed to fetch data!',
                     }, done)
             })
+
+            it('fails the response if a stored payload cannot be decoded', async () => {
+                storage.requestLast = () => toReadableStream({ payload: new Uint8Array([0]), storedAt: undefined })
+
+                await expect(testGetRequest('/streams/streamId/data/partitions/0/last')).rejects.toThrow()
+            })
         })
 
         describe('?count=666', () => {

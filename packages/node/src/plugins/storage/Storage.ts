@@ -373,6 +373,8 @@ export class Storage extends EventEmitter {
                 const select = `SELECT payload, stored_at FROM stream_data ${q.where} ALLOW FILTERING`
                 return this.queryWithStreamingResults(select, q.params)
             })
+            // The driver can emit a page error after merge2 has unpiped and dropped its own listener
+            streams.forEach((s) => s.on('error', (err) => resultStream.destroy(err)))
 
             return pipeline(
                 // @ts-expect-error options not in type
