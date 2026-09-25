@@ -31,7 +31,9 @@ services:
       - cassandra-data:/var/lib/cassandra
     # The failure detector's default (8) marks a peer down during ~1 s GC pauses
     # and splits a small ring; 12 has run in production since 2026-09.
-    command: ["bash", "-c", "sed -i 's/^# phi_convict_threshold: 8$/phi_convict_threshold: 12/' /etc/cassandra/cassandra.yaml && exec docker-entrypoint.sh cassandra -f"]
+    # Without a -Xlog:gc line in jvm11-server.options, cassandra-env.sh logs heap and
+    # promotion at trace level, which writes hundreds of MB inside a promotion-failure pause.
+    command: ["bash", "-c", "sed -i 's/^# phi_convict_threshold: 8$/phi_convict_threshold: 12/' /etc/cassandra/cassandra.yaml && sed -i 's|^#-Xlog:gc=info,heap\\*=trace,age\\*=debug,safepoint=info,promotion\\*=trace:|-Xlog:gc=info,safepoint=info:|' /etc/cassandra/jvm11-server.options && exec docker-entrypoint.sh cassandra -f"]
     healthcheck:
       test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' > /dev/null 2>&1"]
       interval: 20s
