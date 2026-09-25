@@ -46,8 +46,9 @@ const readEnvelope = (req: Request): unknown => {
  * now: for a gated channel the gate owner, a moderator, or an account the gate
  * accepts; for a non-gated stream, SUBSCRIBE on it. A stream whose SUBSCRIBE is
  * public is served without a signature, as a vanilla node serves it. When the
- * chain cannot be consulted the read is refused: a read can be retried, a leak
- * cannot be undone.
+ * chain cannot be consulted, a stream it last described as public is served
+ * and every other read is refused: a read can be retried, a leak cannot be
+ * undone.
  */
 export const createSignedReadGuard = (
     enabled: boolean,
@@ -75,6 +76,11 @@ export const createSignedReadGuard = (
                 res.status(404).json({ error: 'Stream not found' })
                 return
             }
+            if (gates.wasLastSeenPublic(streamId)) {
+                logger.warn('Could not read gate, serving a stream last seen as public', { streamId, err })
+                next()
+                return
+            }
             logger.warn('Could not read gate, refusing read', { streamId, err })
             res.status(503).json({ error: 'Cannot verify access right now' })
             return
@@ -89,6 +95,11 @@ export const createSignedReadGuard = (
             try {
                 isPublic = await gates.isPublicSubscribe(streamId)
             } catch (err) {
+                if (gates.wasLastSeenPublic(streamId)) {
+                    logger.warn('Could not read permissions, serving a stream last seen as public', { streamId, err })
+                    next()
+                    return
+                }
                 logger.warn('Could not read permissions, refusing read', { streamId, err })
                 res.status(503).json({ error: 'Cannot verify access right now' })
                 return

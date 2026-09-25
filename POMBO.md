@@ -77,9 +77,16 @@ Reading the streams of a gated channel requires a signed request
 (`plugins.storage.signedReads.enabled`, on by default), and the signer must have access
 to the channel right now (owner, moderator, or accepted by the gate's
 `checkAccess`). The admin stream (`-3`) stays open: channel previews and
-the entry screen of non-members are served from it. Streams outside
-gated channels are unaffected. While the chain cannot be consulted the
-node answers 503 rather than serve the data.
+the entry screen of non-members are served from it. A stream outside gated
+channels is open when its SUBSCRIBE is public, as on a vanilla node;
+otherwise (a DM inbox) the signer must hold SUBSCRIBE on it.
+
+While the chain cannot be consulted the node answers 503 rather than serve
+the data, except for a stream whose latest answer from the chain was no gate
+and public SUBSCRIBE: that one is served. Those streams are listed in
+`~/.streamr/known-public-streams.json`, so the list holds after a restart.
+Every answer from the chain replaces the entry, and a stream the node never
+asked about still gets 503.
 
 Headers: `x-pombo-user`, `x-pombo-issued-at`, `x-pombo-nonce`,
 `x-pombo-signature`.

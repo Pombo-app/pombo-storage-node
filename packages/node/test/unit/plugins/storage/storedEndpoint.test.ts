@@ -13,6 +13,7 @@ import { BaseWallet, Wallet } from 'ethers'
 import express from 'express'
 import { mock } from 'jest-mock-extended'
 import request from 'supertest'
+import { KnownPublicStreams } from '../../../../src/plugins/storage/KnownPublicStreams'
 import { GateInfo, GateReader, PomboGates } from '../../../../src/plugins/storage/PomboGates'
 import { SignedRequestVerifier, createSignedRequestMessage } from '../../../../src/plugins/storage/SignedRequest'
 import { Storage } from '../../../../src/plugins/storage/Storage'
@@ -70,6 +71,12 @@ describe('storedEndpoint', () => {
         return { user, issuedAt, nonce, signature: await signingWallet.signMessage(message), targets }
     }
 
+    const mountEndpoint = () => {
+        app = express()
+        const endpoint = createStoredEndpoint(storage, gates, client, new SignedRequestVerifier())
+        app.route(endpoint.path)[endpoint.method](endpoint.requestHandlers)
+    }
+
     const stored = (body: any) => {
         return request(app).post(`/streams/${encodeURIComponent(STREAM_ID)}/data/partitions/${PARTITION}/stored`).send(body)
     }
@@ -89,9 +96,7 @@ describe('storedEndpoint', () => {
         client.getMessageSigner.mockReturnValue(randomEthereumAddress())   // not the signer by default
         gateReader.getInfo.mockResolvedValue(gate())
         gates = new PomboGates(client, gateReader)
-        app = express()
-        const endpoint = createStoredEndpoint(storage, gates, client, new SignedRequestVerifier())
-        app.route(endpoint.path)[endpoint.method](endpoint.requestHandlers)
+        mountEndpoint()
     })
 
     afterEach(() => {
@@ -147,5 +152,16 @@ describe('storedEndpoint', () => {
         client.hasPermission.mockRejectedValue(new Error('RPC unavailable'))
         const body = await signedBody([{ timestamp: 1000, sequenceNumber: 0 }])
         await stored(body).expect(503)
+    })
+
+    it('answers for a stream the chain last described as public while it cannot be consulted', async () => {
+        const known = new KnownPublicStreams()
+        known.set(STREAM_ID, true)
+        gates.destroy()
+        gates = new PomboGates(client, gateReader, known)
+        mountEndpoint()
+        client.getStreamMetadata.mockRejectedValue(new Error('RPC unavailable'))
+        const res = await stored(await signedBody([{ timestamp: 1000, sequenceNumber: 0 }])).expect(200)
+        expect(res.body.results[0].result).toBe('present')
     })
 })
