@@ -3,6 +3,7 @@ import { Logger } from '@streamr/utils'
 import cassandra, { Client } from 'cassandra-driver'
 import pLimit from 'p-limit'
 import { DeleteExpiredCmd } from './DeleteExpiredCmd'
+import { LoadBalancingPolicyFactory } from './localHostPolicy'
 
 const logger = new Logger('RetentionScheduler')
 
@@ -59,16 +60,24 @@ export class RetentionScheduler {
     private readonly cassandraConfig: RetentionCassandraConfig
     private readonly config: RetentionConfig
     private readonly streamrBaseUrl: string
+    private readonly loadBalancing?: LoadBalancingPolicyFactory
     private cassandraClient?: Client
     private timeout?: NodeJS.Timeout
     private running = false
     private stopped = false
 
-    constructor(streamrClient: StreamrClient, cassandraConfig: RetentionCassandraConfig, config: RetentionConfig, httpPort: number) {
+    constructor(
+        streamrClient: StreamrClient,
+        cassandraConfig: RetentionCassandraConfig,
+        config: RetentionConfig,
+        httpPort: number,
+        loadBalancing?: LoadBalancingPolicyFactory
+    ) {
         this.streamrClient = streamrClient
         this.cassandraConfig = cassandraConfig
         this.config = config
         this.streamrBaseUrl = `http://127.0.0.1:${httpPort}`
+        this.loadBalancing = loadBalancing
     }
 
     start(): void {
@@ -120,7 +129,8 @@ export class RetentionScheduler {
             contactPoints: [...this.cassandraConfig.hosts],
             localDataCenter: this.cassandraConfig.datacenter,
             keyspace: this.cassandraConfig.keyspace,
-            authProvider: new cassandra.auth.PlainTextAuthProvider(this.cassandraConfig.username, this.cassandraConfig.password)
+            authProvider: new cassandra.auth.PlainTextAuthProvider(this.cassandraConfig.username, this.cassandraConfig.password),
+            ...(this.loadBalancing !== undefined ? { policies: { loadBalancing: this.loadBalancing() } } : {})
         })
         return this.cassandraClient
     }
@@ -133,6 +143,7 @@ export class RetentionScheduler {
             cassandraHosts: this.cassandraConfig.hosts,
             cassandraDatacenter: this.cassandraConfig.datacenter,
             cassandraKeyspace: this.cassandraConfig.keyspace,
+            cassandraLoadBalancing: this.loadBalancing,
             bucketLimit: this.config.bucketDeleteLimit,
             dryRun: false
         })

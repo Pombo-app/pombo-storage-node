@@ -2,6 +2,7 @@ import cassandra, { Client } from 'cassandra-driver'
 import pLimit, { Limit } from 'p-limit'
 import { StreamrClient } from '@streamr/sdk'
 import { Logger } from '@streamr/utils'
+import { LoadBalancingPolicyFactory } from './localHostPolicy'
 
 const logger = new Logger('DeleteExpiredCmd')
 
@@ -35,6 +36,7 @@ interface Options {
     cassandraHosts: string[]
     cassandraDatacenter: string
     cassandraKeyspace: string
+    cassandraLoadBalancing?: LoadBalancingPolicyFactory
     bucketLimit?: number
     dryRun?: boolean
 }
@@ -54,6 +56,7 @@ export class DeleteExpiredCmd {
         cassandraHosts,
         cassandraDatacenter,
         cassandraKeyspace,
+        cassandraLoadBalancing,
         bucketLimit,
         dryRun = true
     }: Options) {
@@ -67,6 +70,7 @@ export class DeleteExpiredCmd {
             localDataCenter: cassandraDatacenter,
             keyspace: cassandraKeyspace,
             authProvider,
+            ...(cassandraLoadBalancing !== undefined ? { policies: { loadBalancing: cassandraLoadBalancing() } } : {})
         })
 
         // used for limited concurrency

@@ -13,4 +13,10 @@ describe('storage plugin config schema', () => {
         validateConfig(config, PLUGIN_CONFIG_SCHEMA)
         expect(config).toMatchObject({ read: { fetchSize: 32 } })
     })
+
+    it('pins queries to the local Cassandra when the config does not say', () => {
+        const config = existingConfig()
+        validateConfig(config, PLUGIN_CONFIG_SCHEMA)
+        expect(config).toMatchObject({ cassandra: { pinToLocal: true } })
+    })
 })

@@ -8,6 +8,7 @@ import { v1 as uuidv1 } from 'uuid'
 import { BatchManager } from './BatchManager'
 import { Bucket, BucketId } from './Bucket'
 import { BucketManager, BucketManagerOptions } from './BucketManager'
+import { LoadBalancingPolicyFactory } from './localHostPolicy'
 import { StoredMessage, StoredRow } from './StoredMessage'
 import { MAX_SEQUENCE_NUMBER_VALUE, MIN_SEQUENCE_NUMBER_VALUE } from './dataQueryEndpoint'
 
@@ -33,6 +34,7 @@ export interface StartCassandraOptions {
     keyspace: string
     username?: string
     password?: string
+    loadBalancing?: LoadBalancingPolicyFactory
     opts?: StorageOptions
 }
 
@@ -583,6 +585,7 @@ export const startCassandraStorage = async ({
     keyspace,
     username,
     password,
+    loadBalancing,
     opts
 }: StartCassandraOptions): Promise<Storage> => {
     const authProvider = new auth.PlainTextAuthProvider(username ?? '', password ?? '')
@@ -601,7 +604,8 @@ export const startCassandraStorage = async ({
         requestTracker: requestLogger,
         pooling: {
             maxRequestsPerConnection: 32768
-        }
+        },
+        ...(loadBalancing !== undefined ? { policies: { loadBalancing: loadBalancing() } } : {})
     })
     const nbTrials = 20
     let retryCount = nbTrials

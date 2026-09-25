@@ -4,6 +4,7 @@ import { Schema } from 'ajv'
 import { ApiPluginConfig, Plugin } from '../../Plugin'
 import { Storage, startCassandraStorage } from './Storage'
 import { IngestValidator } from './IngestValidator'
+import { LoadBalancingPolicyFactory, createLocalHostPolicyFactory } from './localHostPolicy'
 import { PomboGates } from './PomboGates'
 import { SignedRequestVerifier } from './SignedRequest'
 import { RetentionScheduler } from './RetentionScheduler'
@@ -26,6 +27,7 @@ export interface StoragePluginConfig extends ApiPluginConfig {
         password: string
         keyspace: string
         datacenter: string
+        pinToLocal: boolean
     }
     storageConfig: {
         refreshInterval: number
@@ -81,7 +83,12 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         const clusterId = this.pluginConfig.cluster.clusterAddress ?? toEthereumAddress(await this.streamrClient.getUserId())
         const assignmentStream = await this.streamrClient.getStream(formStorageNodeAssignmentStreamId(clusterId))
         const metricsContext = await this.streamrClient.getNode().getMetricsContext()
-        this.cassandra = await this.startCassandraStorage(metricsContext)
+        const { hosts, datacenter, pinToLocal } = this.pluginConfig.cassandra
+        const loadBalancing = pinToLocal ? await createLocalHostPolicyFactory(hosts, datacenter) : undefined
+        if (pinToLocal) {
+            logger.info('Cassandra queries coordinated only by the local host', { localHost: hosts[0] })
+        }
+        this.cassandra = await this.startCassandraStorage(metricsContext, loadBalancing)
         this.storageConfig = await this.startStorageConfig(clusterId, assignmentStream)
         this.gates = new PomboGates(this.streamrClient)
         this.ingestValidator = new IngestValidator(this.streamrClient, metricsContext, this.gates)
@@ -117,7 +124,8 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
                 this.streamrClient,
                 this.pluginConfig.cassandra,
                 this.pluginConfig.retention,
-                this.brokerConfig.httpServer.port
+                this.brokerConfig.httpServer.port,
+                loadBalancing
             )
             this.retentionScheduler.start()
         }
@@ -139,13 +147,14 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         return PLUGIN_CONFIG_SCHEMA
     }
 
-    private async startCassandraStorage(metricsContext: MetricsContext): Promise<Storage> {
+    private async startCassandraStorage(metricsContext: MetricsContext, loadBalancing?: LoadBalancingPolicyFactory): Promise<Storage> {
         const cassandraStorage = await startCassandraStorage({
             contactPoints: [...this.pluginConfig.cassandra.hosts],
             localDataCenter: this.pluginConfig.cassandra.datacenter,
             keyspace: this.pluginConfig.cassandra.keyspace,
             username: this.pluginConfig.cassandra.username,
             password: this.pluginConfig.cassandra.password,
+            loadBalancing,
             opts: {
                 useTtl: false,
                 logErrors: this.pluginConfig.batch.logErrors,
