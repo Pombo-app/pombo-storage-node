@@ -64,6 +64,8 @@ services:
       LOG_LEVEL: info
       NODE_OPTIONS: --max-semi-space-size=128 --max-old-space-size=${NODE_OLD_SPACE_MB:-2048}
     volumes:
+      # The node's own state (known public streams, last retention run) must outlive a recreate.
+      - node-state:/home/streamr/.streamr
       - ./config:/home/streamr/.streamr/config:ro
     ports:
       - "${POMBO_WS_PORT:-32200}:${POMBO_WS_PORT:-32200}"
@@ -72,3 +74,4 @@ services:
 
 volumes:
   cassandra-data:
+  node-state:

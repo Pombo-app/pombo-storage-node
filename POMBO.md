@@ -84,7 +84,8 @@ otherwise (a DM inbox) the signer must hold SUBSCRIBE on it.
 While the chain cannot be consulted the node answers 503 rather than serve
 the data, except for a stream whose latest answer from the chain was no gate
 and public SUBSCRIBE: that one is served. Those streams are listed in
-`~/.streamr/known-public-streams.json`, so the list holds after a restart.
+`~/.streamr/known-public-streams.json`, so the list holds after a restart
+(and after a recreate, in the `node-state` volume of the bundled `docker compose`).
 Every answer from the chain replaces the entry, and a stream the node never
 asked about still gets 503.
 
@@ -116,8 +117,9 @@ The first run comes ten minutes after the node starts, leaving the chain RPC
 to the permission lookups of the first reads, unless a run started less than
 `retention.intervalHours` ago: the start of each run is kept in
 `~/.streamr/retention-last-run`, so a node that keeps restarting does not
-repeat a full run on every start. Inside the container that file survives a
-restart but not a recreate.
+repeat a full run on every start. In the bundled `docker compose`,
+`~/.streamr` is the `node-state` volume, so the file also survives a
+recreate.
 
 In a cluster the deletes replicate through Cassandra, so retention runs on
 **one node only**: the installer leaves `retention.enabled` true on the

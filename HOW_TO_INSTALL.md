@@ -200,7 +200,7 @@ docker compose cp cassandra/<file>.cql cassandra:/tmp/x.cql
 docker compose exec cassandra cqlsh -f /tmp/x.cql
 ```
 
-**Stop** the node (the database volume is kept):
+**Stop** the node (the database and node-state volumes are kept):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.caddy.yml down
