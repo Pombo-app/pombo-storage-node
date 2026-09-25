@@ -39,6 +39,7 @@ export class BucketManager {
     cassandraClient: Client
     private checkFullBucketsTimeout?: NodeJS.Timeout
     private storeBucketsTimeout?: NodeJS.Timeout
+    private stopped = false
 
     constructor(cassandraClient: Client, opts: Partial<BucketManagerOptions> = {}) {
         const defaultOptions = {
@@ -141,6 +142,17 @@ export class BucketManager {
     }
 
     private async checkFullBuckets(): Promise<void> {
+        try {
+            await this.checkFullBucketsOnce()
+        } catch (err) {
+            logger.warn('Failed to check buckets', { err })
+        }
+        if (!this.stopped) {
+            this.checkFullBucketsTimeout = setTimeout(() => this.checkFullBuckets(), this.opts.checkFullBucketsTimeout)
+        }
+    }
+
+    private async checkFullBucketsOnce(): Promise<void> {
         const streamIds = Object.keys(this.streamParts)
 
         for (const streamIdKey of streamIds) {
@@ -202,7 +214,6 @@ export class BucketManager {
                 stream.minTimestamp = undefined
             }
         }
-        this.checkFullBucketsTimeout = setTimeout(() => this.checkFullBuckets(), this.opts.checkFullBucketsTimeout)
     }
 
     /**
@@ -307,11 +318,23 @@ export class BucketManager {
     }
 
     stop(): void {
+        this.stopped = true
         clearInterval(this.checkFullBucketsTimeout)
         clearInterval(this.storeBucketsTimeout)
     }
 
     private async storeBuckets(): Promise<void> {
+        try {
+            await this.storeBucketsOnce()
+        } catch (err) {
+            logger.warn('Failed to store buckets', { err })
+        }
+        if (!this.stopped) {
+            this.storeBucketsTimeout = setTimeout(() => this.storeBuckets(), this.opts.storeBucketsTimeout)
+        }
+    }
+
+    private async storeBucketsOnce(): Promise<void> {
         // for non-existing buckets UPDATE works as INSERT
         const UPDATE_BUCKET = 'UPDATE bucket SET size = ?, records = ?, id = ? WHERE stream_id = ? AND partition = ? AND date_create = ?'
 
@@ -348,8 +371,6 @@ export class BucketManager {
 
         const bucketsToRemove = Object.values(this.buckets).filter((bucket: Bucket) => bucket.isStored() && !bucket.isAlive())
         bucketsToRemove.forEach((bucket: Bucket) => this.removeBucket(bucket.getId(), bucket.streamId, bucket.partition))
-
-        this.storeBucketsTimeout = setTimeout(() => this.storeBuckets(), this.opts.storeBucketsTimeout)
     }
 
     private removeBucket(bucketId: BucketId, streamId: string, partition: number): void {
