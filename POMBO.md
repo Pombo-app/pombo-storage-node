@@ -77,9 +77,17 @@ Reading the streams of a gated channel requires a signed request
 (`plugins.storage.signedReads.enabled`, on by default), and the signer must have access
 to the channel right now (owner, moderator, or accepted by the gate's
 `checkAccess`). The admin stream (`-3`) stays open: channel previews and
-the entry screen of non-members are served from it. Streams outside
-gated channels are unaffected. While the chain cannot be consulted the
-node answers 503 rather than serve the data.
+the entry screen of non-members are served from it. A stream outside gated
+channels is open when its SUBSCRIBE is public, as on a vanilla node;
+otherwise (a DM inbox) the signer must hold SUBSCRIBE on it.
+
+While the chain cannot be consulted the node answers 503 rather than serve
+the data, except for a stream whose latest answer from the chain was no gate
+and public SUBSCRIBE: that one is served. Those streams are listed in
+`~/.streamr/known-public-streams.json`, so the list holds after a restart
+(and after a recreate, in the `node-state` volume of the bundled `docker compose`).
+Every answer from the chain replaces the entry, and a stream the node never
+asked about still gets 503.
 
 Headers: `x-pombo-user`, `x-pombo-issued-at`, `x-pombo-nonce`,
 `x-pombo-signature`.
@@ -105,11 +113,13 @@ phase if any stream errors for another reason (an unstable RPC looks like a
 deletion otherwise) or if a suspiciously large fraction of streams look
 deleted, and holds a grace period before removing anything.
 
-The first run comes a minute after the node starts, unless a run started less
-than `retention.intervalHours` ago: the start of each run is kept in
+The first run comes ten minutes after the node starts, leaving the chain RPC
+to the permission lookups of the first reads, unless a run started less than
+`retention.intervalHours` ago: the start of each run is kept in
 `~/.streamr/retention-last-run`, so a node that keeps restarting does not
-repeat a full run on every start. Inside the container that file survives a
-restart but not a recreate.
+repeat a full run on every start. In the bundled `docker compose`,
+`~/.streamr` is the `node-state` volume, so the file also survives a
+recreate.
 
 In a cluster the deletes replicate through Cassandra, so retention runs on
 **one node only**: the installer leaves `retention.enabled` true on the
@@ -171,7 +181,7 @@ Storage plugin keys added to the upstream ones:
 | `bucket.checkFullBucketsTimeout` | 250 | ms between checks for full buckets |
 | `read.fetchSize` | 32 | rows per page when streaming stored messages (128 upstream); Cassandra and the node hold a whole page in memory, and a page of 128 file chunks is ~30 MB |
 | `batch.logErrors` | true | log failed batch inserts (upstream retries them silently) |
-| `signedReads.enabled` | true | require signed reads on gated channels |
+| `signedReads.enabled` | true | require signed reads on gated channels and on streams whose SUBSCRIBE is not public (a DM inbox) |
 | `retention.enabled` | true | prune stored data past each stream's storageDays (one machine per cluster) |
 | `retention.intervalHours` | 6 | how often retention runs |
 | `retention.graceDays` | 7 | hold before deleting an on-chain-deleted stream's data |

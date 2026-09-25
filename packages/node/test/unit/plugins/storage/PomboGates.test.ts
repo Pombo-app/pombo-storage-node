@@ -109,6 +109,81 @@ describe('PomboGates', () => {
         })
     })
 
+    describe('the last answer about a public stream', () => {
+        const PUBLIC_STREAM = '0x1234567890123456789012345678901234567890/public-1'
+
+        const askChain = async (streamId: string): Promise<void> => {
+            if (await gates.getGate(streamId) === null) {
+                await gates.isPublicSubscribe(streamId)
+            }
+        }
+
+        beforeEach(() => {
+            jest.useFakeTimers()
+            client.hasPermission.mockResolvedValue(true)
+        })
+
+        afterEach(() => {
+            jest.useRealTimers()
+        })
+
+        it('remembers a stream with no gate and public SUBSCRIBE', async () => {
+            expect(gates.wasLastSeenPublic(PUBLIC_STREAM)).toBe(false)
+            await askChain(PUBLIC_STREAM)
+            expect(gates.wasLastSeenPublic(PUBLIC_STREAM)).toBe(true)
+        })
+
+        it('never remembers a private or a gated stream', async () => {
+            client.hasPermission.mockResolvedValue(false)
+            await askChain(PUBLIC_STREAM)
+            await askChain(CONVERSATION_STREAM)
+            expect(gates.wasLastSeenPublic(PUBLIC_STREAM)).toBe(false)
+            expect(gates.wasLastSeenPublic(CONVERSATION_STREAM)).toBe(false)
+        })
+
+        it('keeps the last answer while the chain fails', async () => {
+            await askChain(PUBLIC_STREAM)
+            jest.advanceTimersByTime(11 * 60 * 1000)
+            client.getStreamMetadata.mockRejectedValue(new Error('RPC unavailable'))
+            client.hasPermission.mockRejectedValue(new Error('RPC unavailable'))
+            await expect(askChain(PUBLIC_STREAM)).rejects.toThrow('RPC unavailable')
+            expect(gates.wasLastSeenPublic(PUBLIC_STREAM)).toBe(true)
+        })
+
+        it('forgets it as soon as the chain answers that SUBSCRIBE is no longer public', async () => {
+            await askChain(PUBLIC_STREAM)
+            jest.advanceTimersByTime(11 * 60 * 1000)
+            client.hasPermission.mockResolvedValue(false)
+            await askChain(PUBLIC_STREAM)
+            expect(gates.wasLastSeenPublic(PUBLIC_STREAM)).toBe(false)
+        })
+
+        it('forgets it as soon as the chain answers that the stream has a gate', async () => {
+            await askChain(PUBLIC_STREAM)
+            jest.advanceTimersByTime(21 * 1000)
+            client.getStreamMetadata.mockResolvedValue(gatedMetadata(GATE))
+            await askChain(PUBLIC_STREAM)
+            expect(gates.wasLastSeenPublic(PUBLIC_STREAM)).toBe(false)
+        })
+
+        it('forgets it when the metadata names a gate, even if the gate itself cannot be read', async () => {
+            await askChain(PUBLIC_STREAM)
+            jest.advanceTimersByTime(21 * 1000)
+            client.getStreamMetadata.mockResolvedValue(gatedMetadata(GATE))
+            gateReader.getInfo.mockRejectedValue(new Error('RPC unavailable'))
+            await expect(askChain(PUBLIC_STREAM)).rejects.toThrow('RPC unavailable')
+            expect(gates.wasLastSeenPublic(PUBLIC_STREAM)).toBe(false)
+        })
+
+        it('forgets it when the stream is deleted on chain', async () => {
+            await askChain(PUBLIC_STREAM)
+            jest.advanceTimersByTime(21 * 1000)
+            client.getStreamMetadata.mockRejectedValue(Object.assign(new Error('Stream not found'), { code: 'STREAM_NOT_FOUND' }))
+            await expect(askChain(PUBLIC_STREAM)).rejects.toThrow('Stream not found')
+            expect(gates.wasLastSeenPublic(PUBLIC_STREAM)).toBe(false)
+        })
+    })
+
     describe('metadata parsing', () => {
         it('reads the gate from the Pombo description', () => {
             expect(parseGateAddress(gatedMetadata(GATE))).toBe(GATE)

@@ -65,9 +65,13 @@ const createHandler = (storage: Storage, gates: PomboGates, client: StreamrClien
         try {
             canRead = await gates.canRead(streamId, signer)
         } catch (err) {
-            logger.warn('Could not verify access, refusing', { streamId, signer, err })
-            res.status(503).json({ error: 'Cannot verify access right now' })
-            return
+            if (!gates.wasLastSeenPublic(streamId)) {
+                logger.warn('Could not verify access, refusing', { streamId, signer, err })
+                res.status(503).json({ error: 'Cannot verify access right now' })
+                return
+            }
+            logger.warn('Could not verify access, answering for a stream last seen as public', { streamId, err })
+            canRead = true
         }
         const results: (PurgeTarget & { result: StoredResult })[] = []
         for (const target of targets) {

@@ -17,7 +17,8 @@ const listStreamParts = async (client: Client): Promise<{ streamId: string, part
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const HOUR_MS = 60 * 60 * 1000
-const STARTUP_DELAY_MS = 60 * 1000
+// Leaves the chain RPC to the read-permission lookups while their caches warm up.
+const STARTUP_DELAY_MS = 10 * 60 * 1000
 const CLASSIFY_CONCURRENCY = 5
 const DEFAULT_STATE_FILE = path.join(os.homedir(), '.streamr', 'retention-last-run')
 

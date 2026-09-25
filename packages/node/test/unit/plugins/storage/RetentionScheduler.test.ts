@@ -201,9 +201,9 @@ describe('RetentionScheduler first run after a start', () => {
         rmSync(dir, { recursive: true, force: true })
     })
 
-    it('runs a minute after starting when it never ran', () => {
+    it('runs ten minutes after starting when it never ran', () => {
         const runOnce = startScheduler()
-        jest.advanceTimersByTime(59 * 1000)
+        jest.advanceTimersByTime(10 * 60 * 1000 - 1000)
         expect(runOnce).not.toHaveBeenCalled()
         jest.advanceTimersByTime(2 * 1000)
         expect(runOnce).toHaveBeenCalledTimes(1)
@@ -219,9 +219,9 @@ describe('RetentionScheduler first run after a start', () => {
     })
 
     it('records when a run starts', () => {
-        const runStart = Date.now() + 60 * 1000
+        const runStart = Date.now() + 10 * 60 * 1000
         startScheduler()
-        jest.advanceTimersByTime(61 * 1000)
+        jest.advanceTimersByTime(10 * 60 * 1000 + 1000)
         expect(Number(readFileSync(stateFile, 'utf8'))).toBe(runStart)
     })
 })

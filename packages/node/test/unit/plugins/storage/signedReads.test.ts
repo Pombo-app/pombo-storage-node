@@ -5,6 +5,7 @@ import { BaseWallet, Wallet } from 'ethers'
 import express from 'express'
 import { mock } from 'jest-mock-extended'
 import request from 'supertest'
+import { KnownPublicStreams } from '../../../../src/plugins/storage/KnownPublicStreams'
 import { GateInfo, GateReader, PomboGates } from '../../../../src/plugins/storage/PomboGates'
 import { SignedRequestVerifier, createSignedRequestMessage } from '../../../../src/plugins/storage/SignedRequest'
 import { SIGNED_READ_HEADERS, canonicalQuery, createSignedReadGuard } from '../../../../src/plugins/storage/signedReads'
@@ -174,6 +175,59 @@ describe('signed reads', () => {
         it('refuses reads while the chain cannot be consulted', async () => {
             client.hasPermission.mockRejectedValue(new Error('RPC unavailable'))
             await signedRead(createApp(true), DM, { count: '5' }, 503)
+        })
+    })
+
+    describe('when the chain cannot answer', () => {
+        const PUBLIC = '0x1234567890123456789012345678901234567890/public-1'
+        const RPC_DOWN = new Error('RPC unavailable')
+        let known: KnownPublicStreams
+
+        // A node restarted with the list on disk: its caches are empty, so every lookup goes to the chain.
+        const restartNode = () => {
+            gates.destroy()
+            gates = new PomboGates(client, gateReader, known)
+        }
+
+        beforeEach(() => {
+            known = new KnownPublicStreams()
+            restartNode()
+        })
+
+        it('serves a stream the chain last described as public', async () => {
+            await read(createApp(true), PUBLIC, { count: '5' }).expect(200)
+            restartNode()
+            client.getStreamMetadata.mockRejectedValue(RPC_DOWN)
+            await read(createApp(true), PUBLIC, { count: '5' }).expect(200)
+            restartNode()
+            client.getStreamMetadata.mockResolvedValue({ partitions: 1 })
+            client.hasPermission.mockRejectedValue(RPC_DOWN)
+            await read(createApp(true), PUBLIC, { count: '5' }).expect(200)
+        })
+
+        it('refuses a public stream it never asked the chain about', async () => {
+            client.getStreamMetadata.mockRejectedValue(RPC_DOWN)
+            await read(createApp(true), PUBLIC, { count: '5' }).expect(503)
+        })
+
+        it('refuses a stream the chain last described as no longer public', async () => {
+            await read(createApp(true), PUBLIC, { count: '5' }).expect(200)
+            restartNode()
+            client.hasPermission.mockResolvedValue(false)
+            await read(createApp(true), PUBLIC, { count: '5' }).expect(401)
+            restartNode()
+            client.hasPermission.mockRejectedValue(RPC_DOWN)
+            await read(createApp(true), PUBLIC, { count: '5' }).expect(503)
+        })
+
+        it('refuses a stream the chain last described as gated', async () => {
+            await read(createApp(true), PUBLIC, { count: '5' }).expect(200)
+            restartNode()
+            client.getStreamMetadata.mockResolvedValue({ partitions: 1, description: JSON.stringify({ a: 'pombo', t: 'gated', g: GATE }) })
+            await read(createApp(true), PUBLIC, { count: '5' }).expect(401)
+            restartNode()
+            client.getStreamMetadata.mockRejectedValue(RPC_DOWN)
+            await read(createApp(true), PUBLIC, { count: '5' }).expect(503)
         })
     })
 

@@ -1,6 +1,7 @@
-import { StreamPermission, StreamrClient } from '@streamr/sdk'
+import { StreamMetadata, StreamPermission, StreamrClient } from '@streamr/sdk'
 import { EthereumAddress, MapWithTtl, toEthereumAddress } from '@streamr/utils'
 import { Contract } from 'ethers'
+import { KnownPublicStreams } from './KnownPublicStreams'
 
 const POMBO_GATE_ABI = [
     'function owner() view returns (address)',
@@ -122,10 +123,16 @@ export class PomboGates {
     private readonly accessCache = new MapWithTtl<string, boolean>(ttlOf)
     private readonly subscribePublicCache = new MapWithTtl<string, boolean>(ttlOf)
     private readonly subscribeUserCache = new MapWithTtl<string, boolean>(ttlOf)
+    private readonly knownPublic: KnownPublicStreams
 
-    constructor(client: StreamrClient, gateReader: GateReader = createEthersGateReader(client)) {
+    constructor(
+        client: StreamrClient,
+        gateReader: GateReader = createEthersGateReader(client),
+        knownPublic = new KnownPublicStreams()
+    ) {
         this.client = client
         this.gateReader = gateReader
+        this.knownPublic = knownPublic
     }
 
     async getGate(streamId: string): Promise<GateInfo | null> {
@@ -133,13 +140,24 @@ export class PomboGates {
         if (cached !== undefined) {
             return cached
         }
-        const metadata = await this.client.getStreamMetadata(streamId)
+        let metadata: StreamMetadata
+        try {
+            metadata = await this.client.getStreamMetadata(streamId)
+        } catch (err) {
+            if ((err as { code?: string }).code === 'STREAM_NOT_FOUND') {
+                this.knownPublic.set(streamId, false)
+            }
+            throw err
+        }
         let gateAddress = parseGateAddress(metadata)
         if (gateAddress === undefined) {
             const linked = parseLinkedStream(metadata)
             if (linked !== undefined && linked !== streamId) {
                 gateAddress = parseGateAddress(await this.client.getStreamMetadata(linked))
             }
+        }
+        if (gateAddress !== undefined) {
+            this.knownPublic.set(streamId, false)
         }
         const info = (gateAddress !== undefined) ? await this.gateReader.getInfo(gateAddress) : null
         this.gateCache.set(streamId, info)
@@ -154,7 +172,7 @@ export class PomboGates {
         return this.cachedLookup(this.accessCache, gateAddress, user, () => this.gateReader.checkAccess(gateAddress, user))
     }
 
-    /** Whether the stream can be subscribed to by anyone (a public stream). */
+    /** Whether the stream can be subscribed to by anyone (a public stream). Asked only of streams with no gate. */
     async isPublicSubscribe(streamId: string): Promise<boolean> {
         const cached = this.subscribePublicCache.get(streamId)
         if (cached !== undefined) {
@@ -162,7 +180,16 @@ export class PomboGates {
         }
         const result = await this.client.hasPermission({ streamId, permission: StreamPermission.SUBSCRIBE, public: true })
         this.subscribePublicCache.set(streamId, result)
+        this.knownPublic.set(streamId, result)
         return result
+    }
+
+    /**
+     * Whether the chain's latest answer about the stream, however old, was no
+     * gate and public SUBSCRIBE. Only for when the chain cannot answer now.
+     */
+    wasLastSeenPublic(streamId: string): boolean {
+        return this.knownPublic.has(streamId)
     }
 
     /** Whether `user` holds SUBSCRIBE on the stream (not counting a public grant). */
@@ -196,6 +223,7 @@ export class PomboGates {
         this.accessCache.clear()
         this.subscribePublicCache.clear()
         this.subscribeUserCache.clear()
+        this.knownPublic.flush()
     }
 
     // eslint-disable-next-line class-methods-use-this

@@ -5,8 +5,9 @@ import { ApiPluginConfig, Plugin } from '../../Plugin'
 import { Storage, startCassandraStorage } from './Storage'
 import { CassandraWatchdog } from './CassandraWatchdog'
 import { IngestValidator } from './IngestValidator'
+import { DEFAULT_KNOWN_PUBLIC_STREAMS_FILE, KnownPublicStreams } from './KnownPublicStreams'
 import { LoadBalancingPolicyFactory, cassandraContactPoints, createLocalHostPolicyFactory } from './localHostPolicy'
-import { PomboGates } from './PomboGates'
+import { PomboGates, createEthersGateReader } from './PomboGates'
 import { SignedRequestVerifier } from './SignedRequest'
 import { RetentionScheduler } from './RetentionScheduler'
 import { createCapabilitiesEndpoint } from './capabilitiesEndpoint'
@@ -99,7 +100,11 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         })
         this.cassandraWatchdog.start()
         this.storageConfig = await this.startStorageConfig(clusterId, assignmentStream)
-        this.gates = new PomboGates(this.streamrClient)
+        this.gates = new PomboGates(
+            this.streamrClient,
+            createEthersGateReader(this.streamrClient),
+            new KnownPublicStreams(DEFAULT_KNOWN_PUBLIC_STREAMS_FILE)
+        )
         this.ingestValidator = new IngestValidator(this.streamrClient, metricsContext, this.gates)
         this.signedRequestVerifier = new SignedRequestVerifier()
         this.messageListener = (msg) => {

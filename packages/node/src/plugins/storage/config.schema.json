@@ -141,7 +141,7 @@
         },
         "signedReads": {
             "type": "object",
-            "description": "Require a signed request to read the streams of a gated Pombo channel (all but the admin stream).",
+            "description": "Require a signed request to read the streams of a gated Pombo channel (all but the admin stream) and streams whose SUBSCRIBE is not public, such as a DM inbox.",
             "additionalProperties": false,
             "properties": {
                 "enabled": {
