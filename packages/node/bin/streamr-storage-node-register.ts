@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { StreamrClient, formStorageNodeAssignmentStreamId } from '@streamr/sdk'
+import { Stream, StreamPermission, StreamrClient, formStorageNodeAssignmentStreamId } from '@streamr/sdk'
 import { program } from 'commander'
 import pkg from '../package.json'
 import { readConfigAndMigrateIfNeeded } from '../src/config/migration'
@@ -24,16 +24,23 @@ program
                 return
             }
             const assignmentStreamId = formStorageNodeAssignmentStreamId(nodeAddress)
+            let assignmentStream: Stream
             try {
-                await client.getStream(assignmentStreamId)
+                assignmentStream = await client.getStream(assignmentStreamId)
                 console.info(`Assignment stream already exists: ${assignmentStreamId}`)
             } catch (err: any) {
                 if (err?.code === 'STREAM_NOT_FOUND') {
-                    await client.createStream({ id: assignmentStreamId, partitions: 1 })
+                    assignmentStream = await client.createStream({ id: assignmentStreamId, partitions: 1 })
                     console.info(`Created assignment stream: ${assignmentStreamId}`)
                 } else {
                     throw err
                 }
+            }
+            if (await assignmentStream.hasPermission({ public: true, permission: StreamPermission.SUBSCRIBE })) {
+                console.info('Assignment stream is already publicly subscribable')
+            } else {
+                await assignmentStream.grantPermissions({ public: true, permissions: [StreamPermission.SUBSCRIBE] })
+                console.info('Granted public subscribe on the assignment stream')
             }
             if (urls !== undefined && urls.trim() !== '') {
                 await client.setStorageNodeMetadata({ urls: urls.split(',').map((url) => url.trim()) })
