@@ -27,7 +27,7 @@ RUN apt-get update && apt-get --assume-yes --no-install-recommends install \
 RUN usermod -d /home/streamr -l streamr node && groupmod -n streamr node
 # The node writes its GeoIP database under ~/.streamr; when only ~/.streamr/config
 # is bind-mounted, Docker would create the parent as root and the write fails.
-# The home itself must be writable too: on arm64 a dependency creates ~/.local.
+# The home itself must be writable too: the SDK keeps its group keys under ~/.local/share.
 RUN mkdir -p /home/streamr/.streamr && chown streamr:streamr /home/streamr /home/streamr/.streamr
 USER streamr
 WORKDIR /home/streamr/network
