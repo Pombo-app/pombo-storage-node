@@ -47,7 +47,7 @@ program
                 const metadata = await client.getStorageNodeMetadata(nodeAddress)
                 console.info(`Registered ${nodeAddress} with URLs: ${metadata.urls.join(', ')}`)
             } else {
-                console.info(`Assignment stream ready for ${nodeAddress}. No URL given, so the node is not registered for reads yet.`)
+                console.info(`Assignment stream ready for ${nodeAddress}. No URL given, so any registered URLs were left as they are.`)
             }
         } finally {
             await client.destroy()
