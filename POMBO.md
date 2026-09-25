@@ -105,6 +105,12 @@ phase if any stream errors for another reason (an unstable RPC looks like a
 deletion otherwise) or if a suspiciously large fraction of streams look
 deleted, and holds a grace period before removing anything.
 
+The first run comes a minute after the node starts, unless a run started less
+than `retention.intervalHours` ago: the start of each run is kept in
+`~/.streamr/retention-last-run`, so a node that keeps restarting does not
+repeat a full run on every start. Inside the container that file survives a
+restart but not a recreate.
+
 In a cluster the deletes replicate through Cassandra, so retention runs on
 **one node only**: the installer leaves `retention.enabled` true on the
 first machine and sets it false on the others (it also never runs on a node

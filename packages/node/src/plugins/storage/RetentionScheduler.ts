@@ -1,6 +1,9 @@
 import { StreamrClient } from '@streamr/sdk'
 import { Logger } from '@streamr/utils'
 import cassandra, { Client } from 'cassandra-driver'
+import { readFileSync, writeFileSync } from 'fs'
+import os from 'os'
+import path from 'path'
 import pLimit from 'p-limit'
 import { DeleteExpiredCmd } from './DeleteExpiredCmd'
 import { LoadBalancingPolicyFactory } from './localHostPolicy'
@@ -13,7 +16,10 @@ const listStreamParts = async (client: Client): Promise<{ streamId: string, part
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
+const HOUR_MS = 60 * 60 * 1000
+const STARTUP_DELAY_MS = 60 * 1000
 const CLASSIFY_CONCURRENCY = 5
+const DEFAULT_STATE_FILE = path.join(os.homedir(), '.streamr', 'retention-last-run')
 
 export interface RetentionConfig {
     enabled: boolean
@@ -61,6 +67,7 @@ export class RetentionScheduler {
     private readonly config: RetentionConfig
     private readonly streamrBaseUrl: string
     private readonly loadBalancing?: LoadBalancingPolicyFactory
+    private readonly stateFile: string
     private cassandraClient?: Client
     private timeout?: NodeJS.Timeout
     private running = false
@@ -71,19 +78,32 @@ export class RetentionScheduler {
         cassandraConfig: RetentionCassandraConfig,
         config: RetentionConfig,
         httpPort: number,
-        loadBalancing?: LoadBalancingPolicyFactory
+        loadBalancing?: LoadBalancingPolicyFactory,
+        stateFile = DEFAULT_STATE_FILE
     ) {
         this.streamrClient = streamrClient
         this.cassandraConfig = cassandraConfig
         this.config = config
         this.streamrBaseUrl = `http://127.0.0.1:${httpPort}`
         this.loadBalancing = loadBalancing
+        this.stateFile = stateFile
     }
 
     start(): void {
         this.stopped = false
-        // first run shortly after startup, then every interval
-        this.schedule(60 * 1000)
+        this.schedule(this.firstRunDelay())
+    }
+
+    private firstRunDelay(): number {
+        const lastRun = this.readLastRun()
+        const intervalMs = this.config.intervalHours * HOUR_MS
+        const sinceLastRun = (lastRun !== undefined) ? Date.now() - lastRun : undefined
+        if (sinceLastRun === undefined || sinceLastRun < 0 || sinceLastRun >= intervalMs) {
+            return STARTUP_DELAY_MS
+        }
+        const delay = Math.max(STARTUP_DELAY_MS, intervalMs - sinceLastRun)
+        logger.info('Retention ran recently, next run deferred', { minutes: Math.round(delay / 60000) })
+        return delay
     }
 
     stop(): void {
@@ -93,8 +113,26 @@ export class RetentionScheduler {
         }
     }
 
+    private readLastRun(): number | undefined {
+        try {
+            const value = Number(readFileSync(this.stateFile, 'utf8'))
+            return Number.isFinite(value) ? value : undefined
+        } catch {
+            return undefined
+        }
+    }
+
+    private recordRun(): void {
+        try {
+            writeFileSync(this.stateFile, String(Date.now()))
+        } catch (err) {
+            logger.warn('Could not record the retention run', { err, stateFile: this.stateFile })
+        }
+    }
+
     private schedule(delay: number): void {
         this.timeout = setTimeout(() => {
+            this.recordRun()
             return this.runOnce()
                 .catch((err) => logger.warn('Retention run failed', { err }))
                 .finally(() => {

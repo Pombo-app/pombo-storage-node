@@ -1,6 +1,9 @@
 /* eslint-disable class-methods-use-this */
 import { StreamrClient } from '@streamr/sdk'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { mock } from 'jest-mock-extended'
+import os from 'os'
+import path from 'path'
 import { RetentionConfig, RetentionScheduler } from '../../../../src/plugins/storage/RetentionScheduler'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -147,5 +150,57 @@ describe('RetentionScheduler orphan sweep', () => {
             { streamId: 'b', partition: 0, id: 'b2', newest: Date.now() - 100 * DAY_MS }
         ])
         expect(cassandra.batches).toHaveLength(1)
+    })
+})
+
+describe('RetentionScheduler first run after a start', () => {
+
+    const HOUR_MS = 60 * 60 * 1000
+    let dir: string
+    let stateFile: string
+    let scheduler: RetentionScheduler
+
+    const startScheduler = (): jest.SpyInstance => {
+        const cassandraConfig = { hosts: ['h'], username: '', password: '', keyspace: 'k', datacenter: 'd' }
+        scheduler = new RetentionScheduler(mock<StreamrClient>(), cassandraConfig, CONFIG, 8002, undefined, stateFile)
+        const runOnce = jest.spyOn(scheduler, 'runOnce').mockResolvedValue()
+        scheduler.start()
+        return runOnce
+    }
+
+    beforeEach(() => {
+        jest.useFakeTimers()
+        dir = mkdtempSync(path.join(os.tmpdir(), 'retention-'))
+        stateFile = path.join(dir, 'last-run')
+    })
+
+    afterEach(() => {
+        scheduler.stop()
+        jest.useRealTimers()
+        rmSync(dir, { recursive: true, force: true })
+    })
+
+    it('runs a minute after starting when it never ran', () => {
+        const runOnce = startScheduler()
+        jest.advanceTimersByTime(59 * 1000)
+        expect(runOnce).not.toHaveBeenCalled()
+        jest.advanceTimersByTime(2 * 1000)
+        expect(runOnce).toHaveBeenCalledTimes(1)
+    })
+
+    it('waits for the rest of the interval when the last run was recent', () => {
+        writeFileSync(stateFile, String(Date.now() - HOUR_MS))
+        const runOnce = startScheduler()
+        jest.advanceTimersByTime(4 * HOUR_MS)
+        expect(runOnce).not.toHaveBeenCalled()
+        jest.advanceTimersByTime(HOUR_MS + 1000)
+        expect(runOnce).toHaveBeenCalledTimes(1)
+    })
+
+    it('records when a run starts', () => {
+        const runStart = Date.now() + 60 * 1000
+        startScheduler()
+        jest.advanceTimersByTime(61 * 1000)
+        expect(Number(readFileSync(stateFile, 'utf8'))).toBe(runStart)
     })
 })
