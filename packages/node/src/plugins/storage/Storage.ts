@@ -1,5 +1,5 @@
 import { type StreamMessage, convertStreamMessageToBytes } from '@streamr/sdk'
-import { Logger, MetricsContext, RateMetric, UserID } from '@streamr/utils'
+import { Logger, MetricsContext, RateMetric, UserID, merge } from '@streamr/utils'
 import { Client, auth, tracker, types } from 'cassandra-driver'
 import { EventEmitter } from 'events'
 import merge2 from 'merge2'
@@ -8,6 +8,7 @@ import { v1 as uuidv1 } from 'uuid'
 import { BatchManager } from './BatchManager'
 import { Bucket, BucketId } from './Bucket'
 import { BucketManager, BucketManagerOptions } from './BucketManager'
+import { LoadBalancingPolicyFactory } from './localHostPolicy'
 import { StoredMessage, StoredRow } from './StoredMessage'
 import { MAX_SEQUENCE_NUMBER_VALUE, MIN_SEQUENCE_NUMBER_VALUE } from './dataQueryEndpoint'
 
@@ -33,6 +34,7 @@ export interface StartCassandraOptions {
     keyspace: string
     username?: string
     password?: string
+    loadBalancing?: LoadBalancingPolicyFactory
     opts?: StorageOptions
 }
 
@@ -55,6 +57,7 @@ export type StorageOptions = Partial<BucketManagerOptions> & {
     useTtl?: boolean
     logErrors?: boolean
     retriesIntervalMilliseconds?: number
+    fetchSize?: number
 }
 
 export class Storage extends EventEmitter {
@@ -70,13 +73,11 @@ export class Storage extends EventEmitter {
 
         const defaultOptions = {
             useTtl: false,
-            retriesIntervalMilliseconds: 500
+            retriesIntervalMilliseconds: 500,
+            fetchSize: 32
         }
 
-        this.opts = {
-            ...defaultOptions,
-            ...opts
-        }
+        this.opts = merge(defaultOptions, opts)
 
         this.cassandraClient = cassandraClient
         this.bucketManager = new BucketManager(cassandraClient, opts)
@@ -373,6 +374,8 @@ export class Storage extends EventEmitter {
                 const select = `SELECT payload, stored_at FROM stream_data ${q.where} ALLOW FILTERING`
                 return this.queryWithStreamingResults(select, q.params)
             })
+            // The driver can emit a page error after merge2 has unpiped and dropped its own listener
+            streams.forEach((s) => s.on('error', (err) => resultStream.destroy(err)))
 
             return pipeline(
                 // @ts-expect-error options not in type
@@ -399,7 +402,7 @@ export class Storage extends EventEmitter {
         return this.cassandraClient.stream(query, queryParams, {
             prepare: true,
             // force small page sizes, otherwise gives RangeError [ERR_OUT_OF_RANGE]: The value of "offset" is out of range.
-            fetchSize: 128,
+            fetchSize: this.opts.fetchSize,
             readTimeout: 0,
         }) as Readable
     }
@@ -582,6 +585,7 @@ export const startCassandraStorage = async ({
     keyspace,
     username,
     password,
+    loadBalancing,
     opts
 }: StartCassandraOptions): Promise<Storage> => {
     const authProvider = new auth.PlainTextAuthProvider(username ?? '', password ?? '')
@@ -600,7 +604,8 @@ export const startCassandraStorage = async ({
         requestTracker: requestLogger,
         pooling: {
             maxRequestsPerConnection: 32768
-        }
+        },
+        ...(loadBalancing !== undefined ? { policies: { loadBalancing: loadBalancing() } } : {})
     })
     const nbTrials = 20
     let retryCount = nbTrials

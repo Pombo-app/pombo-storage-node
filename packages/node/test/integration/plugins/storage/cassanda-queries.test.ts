@@ -160,7 +160,7 @@ describe('cassanda-queries', () => {
         })
 
         it('message query error', async () => {
-            (storage.cassandraClient as any).setError('payload FROM stream_data')
+            (storage.cassandraClient as any).setError('payload, stored_at FROM stream_data')
             const resultStream = storage.requestLast(MOCK_STREAM_ID, 0, 1)
             const [ actualError ] = await waitForEvent(resultStream, 'error')
             expect(actualError).toBe(ProxyClient.ERROR)
@@ -207,7 +207,7 @@ describe('cassanda-queries', () => {
         })
 
         it('message query error', async () => {
-            (storage.cassandraClient as any).setError('payload FROM stream_data')
+            (storage.cassandraClient as any).setError('payload, stored_at FROM stream_data')
             const resultStream = getResultStream(MOCK_STREAM_ID)
             const [ actualError ] = await waitForEvent(resultStream, 'error')
             expect(actualError).toBe(ProxyClient.ERROR)

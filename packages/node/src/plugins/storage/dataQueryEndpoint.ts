@@ -27,7 +27,14 @@ class ResponseTransform extends Transform {
         this.format = format
     }
 
-    override _transform(input: StoredMessage, _encoding: string, done: () => void) {
+    override _transform(input: StoredMessage, _encoding: string, done: (err?: Error) => void) {
+        let formatted: string | Uint8Array
+        try {
+            formatted = this.format.formatMessage(input)
+        } catch (err) {
+            done(err)
+            return
+        }
         if (this.firstMessage) {
             this.firstMessage = false
             if (this.format.header !== undefined) {
@@ -36,7 +43,7 @@ class ResponseTransform extends Transform {
         } else if (this.format.delimiter !== undefined) {
             this.push(this.format.delimiter)
         }
-        this.push(this.format.formatMessage(input))
+        this.push(formatted)
         done()
     }
 

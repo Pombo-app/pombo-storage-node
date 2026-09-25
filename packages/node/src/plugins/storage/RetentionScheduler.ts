@@ -1,8 +1,12 @@
 import { StreamrClient } from '@streamr/sdk'
 import { Logger } from '@streamr/utils'
 import cassandra, { Client } from 'cassandra-driver'
+import { readFileSync, writeFileSync } from 'fs'
+import os from 'os'
+import path from 'path'
 import pLimit from 'p-limit'
 import { DeleteExpiredCmd } from './DeleteExpiredCmd'
+import { LoadBalancingPolicyFactory } from './localHostPolicy'
 
 const logger = new Logger('RetentionScheduler')
 
@@ -12,7 +16,10 @@ const listStreamParts = async (client: Client): Promise<{ streamId: string, part
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
+const HOUR_MS = 60 * 60 * 1000
+const STARTUP_DELAY_MS = 60 * 1000
 const CLASSIFY_CONCURRENCY = 5
+const DEFAULT_STATE_FILE = path.join(os.homedir(), '.streamr', 'retention-last-run')
 
 export interface RetentionConfig {
     enabled: boolean
@@ -59,22 +66,44 @@ export class RetentionScheduler {
     private readonly cassandraConfig: RetentionCassandraConfig
     private readonly config: RetentionConfig
     private readonly streamrBaseUrl: string
+    private readonly loadBalancing?: LoadBalancingPolicyFactory
+    private readonly stateFile: string
     private cassandraClient?: Client
     private timeout?: NodeJS.Timeout
     private running = false
     private stopped = false
 
-    constructor(streamrClient: StreamrClient, cassandraConfig: RetentionCassandraConfig, config: RetentionConfig, httpPort: number) {
+    constructor(
+        streamrClient: StreamrClient,
+        cassandraConfig: RetentionCassandraConfig,
+        config: RetentionConfig,
+        httpPort: number,
+        loadBalancing?: LoadBalancingPolicyFactory,
+        stateFile = DEFAULT_STATE_FILE
+    ) {
         this.streamrClient = streamrClient
         this.cassandraConfig = cassandraConfig
         this.config = config
         this.streamrBaseUrl = `http://127.0.0.1:${httpPort}`
+        this.loadBalancing = loadBalancing
+        this.stateFile = stateFile
     }
 
     start(): void {
         this.stopped = false
-        // first run shortly after startup, then every interval
-        this.schedule(60 * 1000)
+        this.schedule(this.firstRunDelay())
+    }
+
+    private firstRunDelay(): number {
+        const lastRun = this.readLastRun()
+        const intervalMs = this.config.intervalHours * HOUR_MS
+        const sinceLastRun = (lastRun !== undefined) ? Date.now() - lastRun : undefined
+        if (sinceLastRun === undefined || sinceLastRun < 0 || sinceLastRun >= intervalMs) {
+            return STARTUP_DELAY_MS
+        }
+        const delay = Math.max(STARTUP_DELAY_MS, intervalMs - sinceLastRun)
+        logger.info('Retention ran recently, next run deferred', { minutes: Math.round(delay / 60000) })
+        return delay
     }
 
     stop(): void {
@@ -84,8 +113,26 @@ export class RetentionScheduler {
         }
     }
 
+    private readLastRun(): number | undefined {
+        try {
+            const value = Number(readFileSync(this.stateFile, 'utf8'))
+            return Number.isFinite(value) ? value : undefined
+        } catch {
+            return undefined
+        }
+    }
+
+    private recordRun(): void {
+        try {
+            writeFileSync(this.stateFile, String(Date.now()))
+        } catch (err) {
+            logger.warn('Could not record the retention run', { err, stateFile: this.stateFile })
+        }
+    }
+
     private schedule(delay: number): void {
         this.timeout = setTimeout(() => {
+            this.recordRun()
             return this.runOnce()
                 .catch((err) => logger.warn('Retention run failed', { err }))
                 .finally(() => {
@@ -101,8 +148,9 @@ export class RetentionScheduler {
             logger.info('Previous retention run still in progress, skipping')
             return
         }
+        const client = this.createCassandraClient()
+        this.cassandraClient = client
         this.running = true
-        const client = this.getCassandraClient()
         try {
             logger.info('Retention: bucket retention')
             await this.bucketRetention()
@@ -112,17 +160,19 @@ export class RetentionScheduler {
             await this.orphanSweep(client)
         } finally {
             this.running = false
+            this.cassandraClient = undefined
+            await client.shutdown()
         }
     }
 
-    private getCassandraClient(): Client {
-        this.cassandraClient ??= new cassandra.Client({
+    private createCassandraClient(): Client {
+        return new cassandra.Client({
             contactPoints: [...this.cassandraConfig.hosts],
             localDataCenter: this.cassandraConfig.datacenter,
             keyspace: this.cassandraConfig.keyspace,
-            authProvider: new cassandra.auth.PlainTextAuthProvider(this.cassandraConfig.username, this.cassandraConfig.password)
+            authProvider: new cassandra.auth.PlainTextAuthProvider(this.cassandraConfig.username, this.cassandraConfig.password),
+            ...(this.loadBalancing !== undefined ? { policies: { loadBalancing: this.loadBalancing() } } : {})
         })
-        return this.cassandraClient
     }
 
     private async bucketRetention(): Promise<void> {
@@ -133,6 +183,7 @@ export class RetentionScheduler {
             cassandraHosts: this.cassandraConfig.hosts,
             cassandraDatacenter: this.cassandraConfig.datacenter,
             cassandraKeyspace: this.cassandraConfig.keyspace,
+            cassandraLoadBalancing: this.loadBalancing,
             bucketLimit: this.config.bucketDeleteLimit,
             dryRun: false
         })
@@ -294,9 +345,6 @@ export class RetentionScheduler {
 
     async destroy(): Promise<void> {
         this.stop()
-        if (this.cassandraClient !== undefined) {
-            await this.cassandraClient.shutdown()
-            this.cassandraClient = undefined
-        }
+        await this.cassandraClient?.shutdown()
     }
 }

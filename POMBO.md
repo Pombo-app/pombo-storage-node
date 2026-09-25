@@ -105,10 +105,27 @@ phase if any stream errors for another reason (an unstable RPC looks like a
 deletion otherwise) or if a suspiciously large fraction of streams look
 deleted, and holds a grace period before removing anything.
 
+The first run comes a minute after the node starts, unless a run started less
+than `retention.intervalHours` ago: the start of each run is kept in
+`~/.streamr/retention-last-run`, so a node that keeps restarting does not
+repeat a full run on every start. Inside the container that file survives a
+restart but not a recreate.
+
 In a cluster the deletes replicate through Cassandra, so retention runs on
 **one node only**: the installer leaves `retention.enabled` true on the
 first machine and sets it false on the others (it also never runs on a node
 whose `myIndexInCluster` is not 0).
+
+### Cassandra watchdog
+
+Every 30 seconds the node runs a trivial query. If for two minutes every one
+of them fails with no usable Cassandra host (`NoHostAvailableError`; timeouts
+do not count), the node exits and Docker restarts it with a fresh driver. The
+driver can otherwise keep a host it never reconnects to, and the node would
+stay up without storing or serving anything. After recreating the Cassandra
+container (a new container IP), expect one such restart, or restart the node
+by hand. The retention client is created for each run, so it cannot get stuck
+between runs.
 
 ### `GET /capabilities`
 
@@ -148,9 +165,11 @@ Storage plugin keys added to the upstream ones:
 
 | Key | Default | Meaning |
 |---|---|---|
+| `cassandra.pinToLocal` | true | use only the first entry of `cassandra.hosts`, the Cassandra on this machine, as contact point and coordinator; the other entries (peers, by their rpc address) are excluded. Upstream spreads queries over the whole datacenter, so one struggling Cassandra stalls every node. With it on, a node whose local Cassandra is down does not start until it is back |
 | `bucket.maxBucketSize` | 8388608 | bytes per Cassandra bucket (100 MB upstream; smaller buckets keep partitions healthy under binary ingest) |
 | `bucket.maxBucketRecords` | 500000 | messages per bucket |
 | `bucket.checkFullBucketsTimeout` | 250 | ms between checks for full buckets |
+| `read.fetchSize` | 32 | rows per page when streaming stored messages (128 upstream); Cassandra and the node hold a whole page in memory, and a page of 128 file chunks is ~30 MB |
 | `batch.logErrors` | true | log failed batch inserts (upstream retries them silently) |
 | `signedReads.enabled` | true | require signed reads on gated channels |
 | `retention.enabled` | true | prune stored data past each stream's storageDays (one machine per cluster) |

@@ -3,7 +3,9 @@ import { EthereumAddress, Logger, MetricsContext, executeSafePromise, toEthereum
 import { Schema } from 'ajv'
 import { ApiPluginConfig, Plugin } from '../../Plugin'
 import { Storage, startCassandraStorage } from './Storage'
+import { CassandraWatchdog } from './CassandraWatchdog'
 import { IngestValidator } from './IngestValidator'
+import { LoadBalancingPolicyFactory, cassandraContactPoints, createLocalHostPolicyFactory } from './localHostPolicy'
 import { PomboGates } from './PomboGates'
 import { SignedRequestVerifier } from './SignedRequest'
 import { RetentionScheduler } from './RetentionScheduler'
@@ -26,6 +28,7 @@ export interface StoragePluginConfig extends ApiPluginConfig {
         password: string
         keyspace: string
         datacenter: string
+        pinToLocal: boolean
     }
     storageConfig: {
         refreshInterval: number
@@ -40,6 +43,9 @@ export interface StoragePluginConfig extends ApiPluginConfig {
         maxBucketSize: number
         maxBucketRecords: number
         checkFullBucketsTimeout: number
+    }
+    read: {
+        fetchSize: number
     }
     batch: {
         logErrors: boolean
@@ -71,6 +77,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
     private ingestValidator?: IngestValidator
     private signedRequestVerifier?: SignedRequestVerifier
     private retentionScheduler?: RetentionScheduler
+    private cassandraWatchdog?: CassandraWatchdog
     private messageListener?: (msg: StreamMessage) => void
 
     async start(streamrClient: StreamrClient): Promise<void> {
@@ -78,7 +85,19 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         const clusterId = this.pluginConfig.cluster.clusterAddress ?? toEthereumAddress(await this.streamrClient.getUserId())
         const assignmentStream = await this.streamrClient.getStream(formStorageNodeAssignmentStreamId(clusterId))
         const metricsContext = await this.streamrClient.getNode().getMetricsContext()
-        this.cassandra = await this.startCassandraStorage(metricsContext)
+        const { hosts, datacenter, pinToLocal } = this.pluginConfig.cassandra
+        const contactPoints = cassandraContactPoints(hosts, pinToLocal)
+        const loadBalancing = pinToLocal ? await createLocalHostPolicyFactory(hosts, datacenter) : undefined
+        if (pinToLocal) {
+            logger.info('Cassandra queries coordinated only by the local host', { localHost: hosts[0] })
+        }
+        this.cassandra = await this.startCassandraStorage(metricsContext, contactPoints, loadBalancing)
+        this.cassandraWatchdog = new CassandraWatchdog(this.cassandra.cassandraClient, {
+            checkIntervalMs: 30 * 1000,
+            maxUnreachableMs: 2 * 60 * 1000,
+            onUnreachable: () => process.exit(1)
+        })
+        this.cassandraWatchdog.start()
         this.storageConfig = await this.startStorageConfig(clusterId, assignmentStream)
         this.gates = new PomboGates(this.streamrClient)
         this.ingestValidator = new IngestValidator(this.streamrClient, metricsContext, this.gates)
@@ -112,9 +131,10 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         if (this.pluginConfig.retention.enabled && this.pluginConfig.cluster.myIndexInCluster === 0) {
             this.retentionScheduler = new RetentionScheduler(
                 this.streamrClient,
-                this.pluginConfig.cassandra,
+                { ...this.pluginConfig.cassandra, hosts: contactPoints },
                 this.pluginConfig.retention,
-                this.brokerConfig.httpServer.port
+                this.brokerConfig.httpServer.port,
+                loadBalancing
             )
             this.retentionScheduler.start()
         }
@@ -123,6 +143,7 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
     async stop(): Promise<void> {
         const node = this.streamrClient!.getNode()
         node.removeMessageListener(this.messageListener!)
+        this.cassandraWatchdog?.stop()
         await this.retentionScheduler?.destroy()
         this.signedRequestVerifier!.destroy()
         this.gates!.destroy()
@@ -136,16 +157,22 @@ export class StoragePlugin extends Plugin<StoragePluginConfig> {
         return PLUGIN_CONFIG_SCHEMA
     }
 
-    private async startCassandraStorage(metricsContext: MetricsContext): Promise<Storage> {
+    private async startCassandraStorage(
+        metricsContext: MetricsContext,
+        contactPoints: string[],
+        loadBalancing?: LoadBalancingPolicyFactory
+    ): Promise<Storage> {
         const cassandraStorage = await startCassandraStorage({
-            contactPoints: [...this.pluginConfig.cassandra.hosts],
+            contactPoints,
             localDataCenter: this.pluginConfig.cassandra.datacenter,
             keyspace: this.pluginConfig.cassandra.keyspace,
             username: this.pluginConfig.cassandra.username,
             password: this.pluginConfig.cassandra.password,
+            loadBalancing,
             opts: {
                 useTtl: false,
                 logErrors: this.pluginConfig.batch.logErrors,
+                fetchSize: this.pluginConfig.read.fetchSize,
                 ...this.pluginConfig.bucket
             }
         })

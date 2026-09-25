@@ -41,6 +41,11 @@
                 },
                 "datacenter": {
                     "type": "string"
+                },
+                "pinToLocal": {
+                    "type": "boolean",
+                    "description": "Coordinate queries only on the first host (the Cassandra on this machine); the other hosts, listed by their rpc address, are contact points only",
+                    "default": true
                 }
             }
         },
@@ -103,6 +108,20 @@
                     "description": "Interval (in milliseconds) between checks for full buckets",
                     "minimum": 1,
                     "default": 250
+                }
+            },
+            "default": {}
+        },
+        "read": {
+            "type": "object",
+            "description": "Reads of stored messages",
+            "additionalProperties": false,
+            "properties": {
+                "fetchSize": {
+                    "type": "integer",
+                    "description": "Rows per page when streaming stored messages. Cassandra and the node hold a whole page in memory, so large messages (file chunks) need a small value",
+                    "minimum": 1,
+                    "default": 32
                 }
             },
             "default": {}
