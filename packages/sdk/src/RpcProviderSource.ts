@@ -1,7 +1,8 @@
 import type { Provider } from 'ethers'
-import { AbstractProvider, FallbackProvider, FetchRequest } from 'ethers'
+import { AbstractProvider, FetchRequest } from 'ethers'
 import { Lifecycle, inject, scoped } from 'tsyringe'
 import { ConfigInjectionToken, type StrictStreamrClientConfig } from './ConfigTypes'
+import { FailoverProvider } from './FailoverProvider'
 import { LoggingJsonRpcProvider } from './utils/LoggingJsonRpcProvider'
 import { config as CHAIN_CONFIG } from '@streamr/config'
 
@@ -30,9 +31,14 @@ export class RpcProviderSource {
     getProvider(): Provider {
         if (this.provider === undefined) {
             const providers = this.getSubProviders()
-            this.provider = new FallbackProvider(providers, this.config.contracts.ethereumNetwork.chainId, {
+            // eslint-disable-next-line no-underscore-dangle
+            const timeouts = this.config._timeouts
+            this.provider = new FailoverProvider(providers, this.config.contracts.ethereumNetwork.chainId, {
                 quorum: Math.min(this.config.contracts.rpcQuorum, this.config.contracts.rpcs.length),
                 cacheTimeout: formJsonRpcApiProviderOptions(this.config).cacheTimeout
+            }, {
+                attemptTimeout: timeouts.jsonRpcAttemptTimeout,
+                callTimeout: timeouts.jsonRpcTimeout
             })
         }
         return this.provider

@@ -49,7 +49,8 @@ describe('use JsonRpcProvider', () => {
                 pollInterval: POLL_INTERVAL
             },
             _timeouts: {
-                jsonRpcTimeout: TIMEOUT
+                jsonRpcTimeout: TIMEOUT,
+                jsonRpcAttemptTimeout: TIMEOUT / 2
             }
         })
     })

@@ -74,6 +74,20 @@ describe('Config', () => {
                 }).toThrow('/auth/privateKey must match format "hex-string"')
             })
         })
+
+        it('JSON-RPC attempt timeout shorter than the call timeout', () => {
+            // eslint-disable-next-line no-underscore-dangle
+            const defaults = createStrictConfig()._timeouts
+            expect(defaults.jsonRpcAttemptTimeout).toBeLessThan(defaults.jsonRpcTimeout)
+            expect(() => {
+                return createStrictConfig({
+                    _timeouts: {
+                        jsonRpcTimeout: 2000,
+                        jsonRpcAttemptTimeout: 2000
+                    }
+                })
+            }).toThrow('_timeouts.jsonRpcAttemptTimeout must be shorter than _timeouts.jsonRpcTimeout')
+        })
     })
 
     describe('merging configs', () => {
