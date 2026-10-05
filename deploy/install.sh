@@ -15,7 +15,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-RPCS='[ { "url": "https://polygon.drpc.org" }, { "url": "https://polygon-bor-rpc.publicnode.com" } ]'
+RPCS='[ { "url": "https://polygon.drpc.org" }, { "url": "https://poly.api.pocket.network" }, { "url": "https://rpc-mainnet.matic.quiknode.pro" } ]'
 RPC0="https://polygon.drpc.org"
 MIN_WEI="20000000000000000"   # 0.02 POL: enough for the assignment stream + registration on Polygon
 CONFIG_IN_CONTAINER="/home/streamr/.streamr/config/pombo-node.json"

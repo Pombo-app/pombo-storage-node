@@ -460,6 +460,8 @@ export interface StreamrClientConfig {
             retryInterval?: number
         }
         jsonRpcTimeout?: number
+        /** Must be shorter than jsonRpcTimeout. */
+        jsonRpcAttemptTimeout?: number
     }
 }
 

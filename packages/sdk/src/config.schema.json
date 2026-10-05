@@ -515,7 +515,12 @@
                 },
                 "jsonRpcTimeout": {
                     "type": "number",
-                    "default": 30000
+                    "default": 10000
+                },
+                "jsonRpcAttemptTimeout": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "default": 3000
                 }
             },
             "default": {}

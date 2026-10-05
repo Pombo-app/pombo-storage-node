@@ -18,6 +18,11 @@ export const createStrictConfig = (input: StreamrClientConfig = {}): StrictStrea
     const environment = config.environment ?? DEFAULT_ENVIRONMENT_ID
     config = applyEnvironmentDefaults(environment, config)
     const strictConfig = validateConfig(config)
+    // eslint-disable-next-line no-underscore-dangle
+    const timeouts = strictConfig._timeouts
+    if (timeouts.jsonRpcAttemptTimeout >= timeouts.jsonRpcTimeout) {
+        throw new Error('_timeouts.jsonRpcAttemptTimeout must be shorter than _timeouts.jsonRpcTimeout')
+    }
     strictConfig.id ??= generateClientId()
     return strictConfig
 }
