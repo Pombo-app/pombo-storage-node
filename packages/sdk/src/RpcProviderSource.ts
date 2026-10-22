@@ -3,8 +3,18 @@ import { AbstractProvider, FetchRequest } from 'ethers'
 import { Lifecycle, inject, scoped } from 'tsyringe'
 import { ConfigInjectionToken, type StrictStreamrClientConfig } from './ConfigTypes'
 import { FailoverProvider } from './FailoverProvider'
+import { ProviderHealth } from './ProviderHealth'
 import { LoggingJsonRpcProvider } from './utils/LoggingJsonRpcProvider'
 import { config as CHAIN_CONFIG } from '@streamr/config'
+
+// Only the host goes to the logs: the path of an RPC URL may carry an API key
+const hostOf = (url: string): string | undefined => {
+    try {
+        return new URL(url).host
+    } catch {
+        return undefined
+    }
+}
 
 function isDevChain(config: Pick<StrictStreamrClientConfig, 'contracts'>): boolean {
     return config.contracts.ethereumNetwork.chainId === CHAIN_CONFIG.dev2.id
@@ -23,6 +33,7 @@ export class RpcProviderSource {
     private readonly config: Pick<StrictStreamrClientConfig, 'contracts' | '_timeouts'>
     private provider?: Provider
     private subProviders?: AbstractProvider[]
+    private health?: ProviderHealth
 
     constructor(@inject(ConfigInjectionToken) config: Pick<StrictStreamrClientConfig, 'contracts' | '_timeouts'>) {
         this.config = config
@@ -39,9 +50,14 @@ export class RpcProviderSource {
             }, {
                 attemptTimeout: timeouts.jsonRpcAttemptTimeout,
                 callTimeout: timeouts.jsonRpcTimeout
-            })
+            }, this.getProviderHealth())
         }
         return this.provider
+    }
+
+    getProviderHealth(): ProviderHealth {
+        this.health ??= new ProviderHealth(this.getSubProviders(), this.config.contracts.rpcs.map((c, i) => hostOf(c.url) ?? `#${i}`))
+        return this.health
     }
 
     /**

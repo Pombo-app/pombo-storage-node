@@ -7,6 +7,7 @@ import {
     isError,
     makeError
 } from 'ethers'
+import { ProviderHealth } from './ProviderHealth'
 
 const PROVIDER_FAILURES = ['SERVER_ERROR', 'TIMEOUT', 'NETWORK_ERROR', 'UNKNOWN_ERROR'] as const
 
@@ -23,17 +24,6 @@ export interface FailoverTimeouts {
     callTimeout: number
 }
 
-const shuffle = <T>(items: readonly T[]): T[] => {
-    const result = [...items]
-    for (let i = result.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1))
-        const swap = result[i]
-        result[i] = result[j]
-        result[j] = swap
-    }
-    return result
-}
-
 /**
  * With quorum 1 the first answer from any provider wins: a transport failure or a slow provider
  * must not decide the call, but an error that is an answer (a revert) ends it.
@@ -42,16 +32,19 @@ export class FailoverProvider extends FallbackProvider {
 
     private readonly providers: readonly AbstractProvider[]
     private readonly timeouts: FailoverTimeouts
+    private readonly health: ProviderHealth
 
     constructor(
         providers: AbstractProvider[],
         network: Networkish,
         options: FallbackProviderOptions,
-        timeouts: FailoverTimeouts
+        timeouts: FailoverTimeouts,
+        health: ProviderHealth = new ProviderHealth(providers)
     ) {
         super(providers, network, options)
         this.providers = providers
         this.timeouts = timeouts
+        this.health = health
     }
 
     override async _perform<T = any>(req: PerformActionRequest): Promise<T> {
@@ -63,7 +56,7 @@ export class FailoverProvider extends FallbackProvider {
     }
 
     private performWithFailover<T>(req: PerformActionRequest): Promise<T> {
-        const queue = shuffle(this.providers)
+        const queue = this.health.order(this.providers)
         return new Promise<T>((resolve, reject) => {
             let pending = 0
             let settled = false
@@ -89,16 +82,22 @@ export class FailoverProvider extends FallbackProvider {
                 }
                 pending++
                 attemptTimer = setTimeout(launchNext, this.timeouts.attemptTimeout)
+                const judge = this.judgeAttempt(provider)
                 // eslint-disable-next-line no-underscore-dangle
                 this._translatePerform(provider, req).then(
-                    (result) => settle(() => resolve(result)),
+                    (result) => {
+                        judge(true)
+                        settle(() => resolve(result))
+                    },
                     (err: unknown) => {
                         pending--
                         const error = asError(err)
                         if (!isProviderFailure(error)) {
+                            judge(true)
                             settle(() => reject(error))
                             return
                         }
+                        judge(false)
                         lastFailure = error
                         if (queue.length > 0) {
                             launchNext()
@@ -110,5 +109,24 @@ export class FailoverProvider extends FallbackProvider {
             }
             launchNext()
         })
+    }
+
+    /** An answer that comes after attemptTimeout is not a success: by then the attempt counted as a failure. */
+    private judgeAttempt(provider: AbstractProvider): (answered: boolean) => void {
+        let judged = false
+        const judge = (answered: boolean) => {
+            if (judged) {
+                return
+            }
+            judged = true
+            clearTimeout(slowTimer)
+            if (answered) {
+                this.health.recordSuccess(provider)
+            } else {
+                this.health.recordFailure(provider)
+            }
+        }
+        const slowTimer = setTimeout(() => judge(false), this.timeouts.attemptTimeout)
+        return judge
     }
 }

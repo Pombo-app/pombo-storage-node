@@ -8,6 +8,7 @@ import {
     makeError
 } from 'ethers'
 import { FailoverProvider, isProviderFailure } from '../../src/FailoverProvider'
+import { ProviderHealth } from '../../src/ProviderHealth'
 
 const CHAIN_ID = 137
 const ATTEMPT_TIMEOUT = 50
@@ -77,11 +78,11 @@ const fails = (err: () => Error, delay = 0) => new FakeProvider(async () => {
 })
 const hangs = (pending: Deferred) => new FakeProvider(() => pending.promise)
 
-const createProvider = (providers: AbstractProvider[], quorum = 1) => {
+const createProvider = (providers: AbstractProvider[], quorum = 1, health?: ProviderHealth) => {
     return new FailoverProvider(providers, CHAIN_ID, { quorum, cacheTimeout: -1 }, {
         attemptTimeout: ATTEMPT_TIMEOUT,
         callTimeout: CALL_TIMEOUT
-    })
+    }, health)
 }
 
 // eslint-disable-next-line no-underscore-dangle
@@ -196,6 +197,73 @@ describe('FailoverProvider', () => {
         const provider = createProvider([blockNumbersOnly, answers('0x2a')])
         expect(await provider.getBlockNumber()).toBe(94998911)
         expect(await provider.call({ to: '0x0000000000000000000000000000000000000001', data: '0x' })).toBe('0x2a')
+    })
+
+    it('asks a provider that failed twice in a row last', async () => {
+        const first = fails(() => serverError(529))
+        const second = answers(42)
+        const provider = createProvider([first, second])
+        await perform(provider)
+        await perform(provider)
+        expect(first.calls).toBe(2)
+        expect(await perform(provider)).toBe(42)
+        expect(first.calls).toBe(2)
+    })
+
+    it('counts an attempt that outlives attemptTimeout as a failure, even when it answers later', async () => {
+        const slow = answers(1, ATTEMPT_TIMEOUT * 2)
+        const second = answers(2)
+        const provider = createProvider([slow, second])
+        expect(await perform(provider)).toBe(2)
+        await wait(ATTEMPT_TIMEOUT * 2)
+        expect(await perform(provider)).toBe(2)
+        await wait(ATTEMPT_TIMEOUT * 2)
+        expect(slow.calls).toBe(2)
+        expect(await perform(provider)).toBe(2)
+        expect(slow.calls).toBe(2)
+    })
+
+    it('keeps a provider that answers with an error in front', async () => {
+        const first = fails(revert)
+        const second = answers(42)
+        const provider = createProvider([first, second])
+        for (let i = 0; i < 3; i++) {
+            await expect(perform(provider)).rejects.toSatisfy((err: unknown) => isError(err, 'CALL_EXCEPTION'))
+        }
+        expect(first.calls).toBe(3)
+        expect(second.calls).toBe(0)
+    })
+
+    it('still asks a provider set aside when the others fail', async () => {
+        let secondDown = false
+        const first = new FakeProvider(async () => {
+            if (first.calls <= 2) {
+                throw serverError(529)
+            }
+            return 1
+        })
+        const second = new FakeProvider(async () => {
+            if (secondDown) {
+                throw serverError(529)
+            }
+            return 2
+        })
+        const provider = createProvider([first, second])
+        await perform(provider)
+        await perform(provider)
+        secondDown = true
+        expect(await perform(provider)).toBe(1)
+        expect([first.calls, second.calls]).toEqual([3, 3])
+    })
+
+    it('shares what it learns through the health it is given', async () => {
+        const first = fails(() => serverError(529))
+        const second = answers(42)
+        const health = new ProviderHealth([first, second])
+        health.recordFailure(first)
+        health.recordFailure(first)
+        expect(await perform(createProvider([first, second], 1, health))).toBe(42)
+        expect(first.calls).toBe(0)
     })
 
     it('leaves quorum above 1 and broadcasts to FallbackProvider', async () => {
