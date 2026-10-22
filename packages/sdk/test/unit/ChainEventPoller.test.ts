@@ -1,8 +1,13 @@
 import { randomEthereumAddress } from '@streamr/test-utils'
 import { until, wait } from '@streamr/utils'
-import { AbstractProvider, Interface, Log } from 'ethers'
+import { AbstractProvider, Interface, Log, makeError } from 'ethers'
 import range from 'lodash/range'
-import { ChainEventPoller, POLLS_SINCE_LAST_FROM_BLOCK_UPDATE_THRESHOLD } from './../../src/contracts/ChainEventPoller'
+import {
+    ChainEventPoller,
+    type EventListenerDefinition,
+    POLLS_SINCE_LAST_FROM_BLOCK_UPDATE_THRESHOLD
+} from './../../src/contracts/ChainEventPoller'
+import { ProviderHealth } from '../../src/ProviderHealth'
 
 const INITIAL_BLOCK_NUMBER = 123
 const CONTRACT_ADDRESS = randomEthereumAddress()
@@ -40,12 +45,18 @@ const createEventLogItem = (
     }
 }
 
-const createChainEventPoller = (provider: AbstractProvider, pollInterval: number) => {
+const ATTEMPT_TIMEOUT = 50
+
+const createChainEventPoller = (provider: AbstractProvider | AbstractProvider[], pollInterval: number) => {
+    const providers = Array.isArray(provider) ? provider : [provider]
+    const health = new ProviderHealth(providers)
     return new ChainEventPoller(
-        { getSubProviders: () => [provider] } as any,
-        { contracts: { pollInterval } } as any
+        { getSubProviders: () => providers, getProviderHealth: () => health } as any,
+        { contracts: { pollInterval }, _timeouts: { jsonRpcAttemptTimeout: ATTEMPT_TIMEOUT } } as any
     )
 }
+
+const serverError = () => makeError('server response 529', 'SERVER_ERROR', { request: 'test' })
 
 describe('ChainEventPoller', () => {
 
@@ -220,6 +231,116 @@ describe('ChainEventPoller', () => {
             onEvent: listener3,
             contractInterfaceFragment: CONTRACT_INTERFACE_FRAGMENT_2,
             contractAddress: CONTRACT_ADDRESS
+        })
+    })
+
+    describe('several providers', () => {
+
+        const EVENT_NAME = 'TestEventName'
+        const CONTRACT_INTERFACE_FRAGMENT = new Interface(createAbi(EVENT_NAME)).getEvent(EVENT_NAME)!
+        const POLL_INTERVAL = 20
+        let poller: ChainEventPoller
+        let definition: EventListenerDefinition<any[]>
+
+        const listen = () => {
+            const listener = jest.fn()
+            definition = {
+                onEvent: listener,
+                contractInterfaceFragment: CONTRACT_INTERFACE_FRAGMENT,
+                contractAddress: CONTRACT_ADDRESS
+            }
+            poller.on(definition)
+            return listener
+        }
+
+        const hangs = () => new Promise<never>(() => {})
+
+        beforeEach(() => {
+            // Keeps the shuffle in list order, so each test decides who goes first
+            jest.spyOn(Math, 'random').mockReturnValue(0.999999)
+        })
+
+        afterEach(() => {
+            poller.off(definition)
+            jest.restoreAllMocks()
+        })
+
+        it('reads the start block from the next provider when the first one hangs', async () => {
+            const first: Partial<AbstractProvider> = {
+                getBlockNumber: jest.fn().mockImplementation(hangs),
+                getLogs: jest.fn().mockResolvedValue([])
+            }
+            const second: Partial<AbstractProvider> = {
+                getBlockNumber: jest.fn().mockResolvedValue(INITIAL_BLOCK_NUMBER),
+                getLogs: jest.fn().mockResolvedValue([])
+            }
+            poller = createChainEventPoller([first, second] as any, POLL_INTERVAL)
+            const start = Date.now()
+            listen()
+            await until(() => (first.getLogs as jest.Mock).mock.calls.length > 0)
+            expect(Date.now() - start).toBeLessThan(ATTEMPT_TIMEOUT * 3)
+            expect(second.getBlockNumber).toHaveBeenCalledTimes(1)
+            expect(first.getLogs).toHaveBeenCalledWith(expect.objectContaining({ fromBlock: INITIAL_BLOCK_NUMBER }))
+        })
+
+        it('polls the next provider in the same tick when one fails', async () => {
+            const first: Partial<AbstractProvider> = {
+                getBlockNumber: jest.fn().mockResolvedValue(INITIAL_BLOCK_NUMBER),
+                getLogs: jest.fn().mockRejectedValue(serverError())
+            }
+            const second: Partial<AbstractProvider> = {
+                getBlockNumber: jest.fn().mockResolvedValue(INITIAL_BLOCK_NUMBER),
+                getLogs: jest.fn().mockResolvedValue([createEventLogItem(EVENT_NAME, ['a', 'b'], INITIAL_BLOCK_NUMBER)])
+            }
+            poller = createChainEventPoller([first, second] as any, 5000)
+            const listener = listen()
+            await until(() => listener.mock.calls.length > 0)
+            expect(listener).toHaveBeenCalledWith(['a', 'b'], INITIAL_BLOCK_NUMBER)
+            expect(first.getLogs).toHaveBeenCalledTimes(1)
+            expect(second.getLogs).toHaveBeenCalledTimes(1)
+        })
+
+        it('stops asking a provider that hangs twice in a row', async () => {
+            const first: Partial<AbstractProvider> = {
+                getBlockNumber: jest.fn().mockResolvedValue(INITIAL_BLOCK_NUMBER),
+                getLogs: jest.fn().mockImplementation(hangs)
+            }
+            const second: Partial<AbstractProvider> = {
+                getBlockNumber: jest.fn().mockResolvedValue(INITIAL_BLOCK_NUMBER),
+                getLogs: jest.fn().mockResolvedValue([])
+            }
+            poller = createChainEventPoller([first, second] as any, POLL_INTERVAL)
+            listen()
+            await until(() => (second.getLogs as jest.Mock).mock.calls.length >= 6, 5000)
+            expect(first.getLogs).toHaveBeenCalledTimes(2)
+        })
+
+        it('reads the block number and the logs of a tick from the same provider', async () => {
+            const calls: string[] = []
+            const provider = (name: string, logs: () => Promise<Log[]>): Partial<AbstractProvider> => ({
+                getBlockNumber: jest.fn().mockImplementation(async () => {
+                    calls.push(`${name}.getBlockNumber`)
+                    return INITIAL_BLOCK_NUMBER
+                }),
+                getLogs: jest.fn().mockImplementation(async () => {
+                    calls.push(`${name}.getLogs`)
+                    return logs()
+                })
+            })
+            let firstPolls = 0
+            const first = provider('first', async () => {
+                // Healthy until the tick that also asks for the block number
+                if (++firstPolls > POLLS_SINCE_LAST_FROM_BLOCK_UPDATE_THRESHOLD) {
+                    throw serverError()
+                }
+                return []
+            })
+            const second = provider('second', async () => [])
+            poller = createChainEventPoller([first, second] as any, 1)
+            listen()
+            await until(() => calls.includes('second.getLogs'), 5000)
+            const tick = calls.slice(calls.lastIndexOf('first.getBlockNumber')).slice(0, 4)
+            expect(tick).toEqual(['first.getBlockNumber', 'first.getLogs', 'second.getBlockNumber', 'second.getLogs'])
         })
     })
 
