@@ -1,10 +1,11 @@
 import { EthereumAddress, Logger, randomString, scheduleAtInterval, toEthereumAddress, wait } from '@streamr/utils'
-import { AbstractProvider, EventFragment, Interface } from 'ethers'
+import { AbstractProvider, EventFragment, Interface, makeError } from 'ethers'
 import remove from 'lodash/remove'
-import sample from 'lodash/sample'
 import uniq from 'lodash/uniq'
 import { inject, Lifecycle, scoped } from 'tsyringe'
 import { ConfigInjectionToken, type StrictStreamrClientConfig } from '../ConfigTypes'
+import { isProviderFailure } from '../FailoverProvider'
+import type { ProviderHealth } from '../ProviderHealth'
 import { RpcProviderSource } from '../RpcProviderSource'
 
 export interface EventListenerDefinition<TEventArgs extends any[]> {
@@ -16,20 +17,59 @@ export interface EventListenerDefinition<TEventArgs extends any[]> {
 const BLOCK_NUMBER_QUERY_RETRY_DELAY = 1000
 export const POLLS_SINCE_LAST_FROM_BLOCK_UPDATE_THRESHOLD = 30
 
+const bounded = <T>(call: Promise<T>, timeout: number): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timedOut = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+            const error: Error = makeError('RPC attempt timed out', 'TIMEOUT', { operation: 'poll', reason: 'timeout' })
+            reject(error)
+        }, timeout)
+    })
+    return Promise.race([call, timedOut]).finally(() => clearTimeout(timer))
+}
+
 @scoped(Lifecycle.ContainerScoped)
 export class ChainEventPoller {
 
     private listeners: EventListenerDefinition<any[]>[] = []
     private providers: AbstractProvider[]
+    private health: ProviderHealth
+    private attemptTimeout: number
     private pollInterval: number
     private abortController?: AbortController
 
     constructor(
         rpcProviderSource: RpcProviderSource,
-        @inject(ConfigInjectionToken) config: Pick<StrictStreamrClientConfig, 'contracts'>
+        @inject(ConfigInjectionToken) config: Pick<StrictStreamrClientConfig, 'contracts' | '_timeouts'>
     ) {
         this.providers = rpcProviderSource.getSubProviders()
+        this.health = rpcProviderSource.getProviderHealth()
+        // eslint-disable-next-line no-underscore-dangle
+        this.attemptTimeout = config._timeouts.jsonRpcAttemptTimeout
         this.pollInterval = config.contracts.pollInterval
+    }
+
+    /**
+     * All calls of one task go to the same provider: a block number from one provider and logs from
+     * another, lagging one would move fromBlock past logs that were never read.
+     */
+    private async withProvider<T>(task: (provider: AbstractProvider) => Promise<T>): Promise<T> {
+        let lastFailure: unknown
+        for (const provider of this.health.order(this.providers)) {
+            try {
+                const result = await task(provider)
+                this.health.recordSuccess(provider)
+                return result
+            } catch (err) {
+                if (!isProviderFailure(err)) {
+                    this.health.recordSuccess(provider)
+                    throw err
+                }
+                this.health.recordFailure(provider)
+                lastFailure = err
+            }
+        }
+        throw lastFailure
     }
 
     on<TEventArgs extends any[]>(definition: EventListenerDefinition<TEventArgs>): void {
@@ -62,7 +102,7 @@ export class ChainEventPoller {
             let fromBlock: number | undefined = undefined
             do {
                 try {
-                    fromBlock = await sample(this.providers)!.getBlockNumber()
+                    fromBlock = await this.withProvider((provider) => bounded(provider.getBlockNumber(), this.attemptTimeout))
                 } catch (err) {
                     logger.debug('Failed to query block number', { err })
                     await wait(BLOCK_NUMBER_QUERY_RETRY_DELAY) // TODO: pass signal?
@@ -71,52 +111,57 @@ export class ChainEventPoller {
 
             let pollsSinceFromBlockUpdate = 0
             await scheduleAtInterval(async () => {
-                const provider = sample(this.providers)!
                 const eventNames = this.listeners.map((l) => l.contractInterfaceFragment.name)
                 let newFromBlock = 0
                 let events: { contractAddress: EthereumAddress, name: string, args: any[], blockNumber: number }[] | undefined = undefined
 
                 try {
-                    // If we haven't updated `fromBlock` for a while, fetch the latest block number explicitly. If
-                    // `fromBlock` falls too much behind the current block number, the RPCs may start rejecting our
-                    // eth_getLogs requests (presumably for performance reasons).
-                    if (pollsSinceFromBlockUpdate >= POLLS_SINCE_LAST_FROM_BLOCK_UPDATE_THRESHOLD) {
-                        newFromBlock = await provider.getBlockNumber() + 1
-                        logger.debug('Fetch next block number explicitly', { newFromBlock } )
-                        if (abortController.signal.aborted) {
-                            return
+                    const logItems = await this.withProvider(async (provider) => {
+                        // If we haven't updated `fromBlock` for a while, fetch the latest block number explicitly. If
+                        // `fromBlock` falls too much behind the current block number, the RPCs may start rejecting our
+                        // eth_getLogs requests (presumably for performance reasons).
+                        if (pollsSinceFromBlockUpdate >= POLLS_SINCE_LAST_FROM_BLOCK_UPDATE_THRESHOLD) {
+                            newFromBlock = await bounded(provider.getBlockNumber(), this.attemptTimeout) + 1
+                            logger.debug('Fetch next block number explicitly', { newFromBlock } )
+                            if (abortController.signal.aborted) {
+                                return undefined
+                            }
                         }
+                        logger.debug('Polling', { fromBlock, eventNames })
+                        // This creates a filter with the following criteria:
+                        // - logs must originate from any of the specified addresses: [address1, address2] (OR condition)
+                        // - logs must match any of the specified topics: [[topic1, topic2, topic3]] (OR condition for topic[0])
+                        // - logs must be within the specified fromBlock range
+                        //
+                        // In the topics filter:
+                        // - the inner array ([topic1, topic2, topic3]) applies an OR condition, meaning the log’s first topic can be any of these
+                        // - the outer array ([[topic1, topic2, topic3]]) applies an AND condition across topic positions
+                        //   (i.e. only one AND expression)
+                        //   See: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
+                        //
+                        // Ideally, we would specify exact address-topic pairs, such as:
+                        //   (addr=111 AND topic=222) OR (addr=333 AND topic=444)
+                        // However, Ethereum's API does not support this level of filtering.
+                        //
+                        // As a result, this filter may return additional logs beyond the intended matches.
+                        // For example, if we want:
+                        //   - Topic T1 from addresses A1 and A2
+                        //   - Topic T2 from address A3
+                        // We might also receive:
+                        //   - T2 from A1 or A2
+                        //   - T1 from A3
+                        // These extra events are safely ignored, as the event propagation logic (see line 148) ensures that
+                        // only relevant listeners process them.
+                        const filter = {
+                            address: uniq(this.listeners.map((l) => l.contractAddress)),
+                            topics: [uniq(this.listeners.map((l) => l.contractInterfaceFragment.topicHash))],
+                            fromBlock
+                        }
+                        return await bounded(provider.getLogs(filter), this.attemptTimeout)
+                    })
+                    if (logItems === undefined) {
+                        return
                     }
-                    logger.debug('Polling', { fromBlock, eventNames })
-                    // This creates a filter with the following criteria: 
-                    // - logs must originate from any of the specified addresses: [address1, address2] (OR condition)
-                    // - logs must match any of the specified topics: [[topic1, topic2, topic3]] (OR condition for topic[0])
-                    // - logs must be within the specified fromBlock range
-                    //
-                    // In the topics filter:
-                    // - the inner array ([topic1, topic2, topic3]) applies an OR condition, meaning the log’s first topic can be any of these
-                    // - the outer array ([[topic1, topic2, topic3]]) applies an AND condition across topic positions (i.e. only one AND expression)
-                    //   See: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
-                    //
-                    // Ideally, we would specify exact address-topic pairs, such as:
-                    //   (addr=111 AND topic=222) OR (addr=333 AND topic=444)
-                    // However, Ethereum's API does not support this level of filtering.
-                    //
-                    // As a result, this filter may return additional logs beyond the intended matches. 
-                    // For example, if we want:
-                    //   - Topic T1 from addresses A1 and A2
-                    //   - Topic T2 from address A3
-                    // We might also receive:
-                    //   - T2 from A1 or A2
-                    //   - T1 from A3
-                    // These extra events are safely ignored, as the event propagation logic (see line 148) ensures that
-                    // only relevant listeners process them.
-                    const filter = {
-                        address: uniq(this.listeners.map((l) => l.contractAddress)),
-                        topics: [uniq(this.listeners.map((l) => l.contractInterfaceFragment.topicHash))],
-                        fromBlock
-                    }
-                    const logItems = await provider.getLogs(filter)
                     events = []
                     for (const logItem of logItems) {
                         const definition = this.listeners.find((l) => {
@@ -159,7 +204,6 @@ export class ChainEventPoller {
                 if (events !== undefined && newFromBlock > fromBlock!) {
                     logger.debug('Forward fromBlock', { before: fromBlock, after: newFromBlock })
                     fromBlock = newFromBlock
-                    // eslint-disable-next-line require-atomic-updates
                     pollsSinceFromBlockUpdate = 0
                 } else {
                     pollsSinceFromBlockUpdate += 1
