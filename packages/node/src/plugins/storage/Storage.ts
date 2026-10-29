@@ -28,6 +28,11 @@ const assertStoredAtColumn = async (cassandraClient: Client): Promise<void> => {
 const MAX_TIMESTAMP_VALUE = 8640000000000000 // https://262.ecma-international.org/5.1/#sec-15.9.1.1
 const MAX_RESEND_LAST = 10000
 
+// A new bucket is dated by the oldest message waiting for it, so with out-of-order
+// delivery it can start before rows already written to the previous bucket. Reads
+// must therefore also look in buckets that start up to this much before the range.
+export const BUCKET_LOOKBACK_MS = 10 * 60 * 1000
+
 export interface StartCassandraOptions {
     contactPoints: string[]
     localDataCenter: string
@@ -246,7 +251,7 @@ export class Storage extends EventEmitter {
     }
 
     async getMessages(streamId: string, partition: number, timestamp: number, sequenceNo: number): Promise<StoredRow[]> {
-        const buckets = await this.bucketManager.getBucketsByTimestamp(streamId, partition, timestamp, timestamp)
+        const buckets = await this.bucketManager.getBucketsByTimestamp(streamId, partition, timestamp - BUCKET_LOOKBACK_MS, timestamp)
         if (buckets.length === 0) {
             return []
         }
@@ -325,7 +330,7 @@ export class Storage extends EventEmitter {
             msgChainId,
         })
 
-        this.bucketManager.getBucketsByTimestamp(streamId, partition, fromTimestamp, toTimestamp).then((buckets: Bucket[]) => {
+        this.bucketManager.getBucketsByTimestamp(streamId, partition, fromTimestamp - BUCKET_LOOKBACK_MS, toTimestamp).then((buckets: Bucket[]) => {
             if (buckets.length === 0) {
                 resultStream.end()
                 return

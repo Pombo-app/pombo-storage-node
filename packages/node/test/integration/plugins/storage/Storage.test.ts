@@ -7,8 +7,8 @@ import {
     convertBytesToStreamMessage,
     convertStreamMessageToBytes
 } from '@streamr/sdk'
-import { hexToBinary, toStreamID, UserID, utf8ToBinary } from '@streamr/utils'
-import { Client } from 'cassandra-driver'
+import { hexToBinary, toStreamID, until, UserID, utf8ToBinary } from '@streamr/utils'
+import { Client, types as cassandraTypes } from 'cassandra-driver'
 import { randomFillSync } from 'crypto'
 import { Readable } from 'stream'
 import toArray from 'stream-to-array'
@@ -17,6 +17,7 @@ import { StoredMessage } from '../../../../src/plugins/storage/StoredMessage'
 import { STREAMR_DOCKER_DEV_HOST } from '../../../utils'
 import { randomUserId } from '@streamr/test-utils'
 
+const { TimeUuid } = cassandraTypes
 const contactPoints = [STREAMR_DOCKER_DEV_HOST]
 const localDataCenter = 'datacenter1'
 const keyspace = 'streamr_dev_v2'
@@ -335,6 +336,27 @@ describe('Storage', () => {
         const results3 = await readStreamToEnd(streamingResults3)
         expect(results3).toEqual([])
     }, 20000)
+
+    test('finds a row that sits in an older bucket than the latest one starting before it', async () => {
+        const first = buildMsg({ streamId, streamPartition: 5, timestamp: 1000000, sequenceNumber: 0 })
+        const late = buildMsg({ streamId, streamPartition: 5, timestamp: 1003000, sequenceNumber: 0 })
+        await storage.store(first)
+        await storage.store(late)
+        await until(async () => (await cassandraClient.execute(
+            'SELECT id FROM bucket WHERE stream_id = ? AND partition = ?', [streamId, 5], { prepare: true }
+        )).rowLength === 1)
+        // a bucket dated between the two rows, as one created for a message delivered out of order
+        await cassandraClient.execute(
+            'UPDATE bucket SET size = 0, records = 0, id = ? WHERE stream_id = ? AND partition = ? AND date_create = ?',
+            [TimeUuid.fromDate(new Date(1002000)).toString(), streamId, 5, 1002000],
+            { prepare: true }
+        )
+
+        const rows = await storage.getMessages(streamId, 5, 1003000, 0)
+        expect(rows.map((row) => row.timestamp)).toEqual([1003000])
+        const results = await readStreamToEnd(storage.requestRange(streamId, 5, 1002500, 0, 1003500, 0, undefined, undefined))
+        expect(results).toEqual([late])
+    })
 
     // This test proves that NET-350 is still an issue
     describe.skip('messages pushed in randomized order', () => {
