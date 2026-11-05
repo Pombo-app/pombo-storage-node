@@ -5,6 +5,20 @@ import { mock } from 'jest-mock-extended'
 import { IngestValidator } from '../../../../src/plugins/storage/IngestValidator'
 import { GateInfo, GateReader, PomboGates } from '../../../../src/plugins/storage/PomboGates'
 
+const mockWarn = jest.fn()
+jest.mock('@streamr/utils', () => {
+    const actual = jest.requireActual('@streamr/utils')
+    return {
+        ...actual,
+        Logger: class extends actual.Logger {
+            constructor(...args: any[]) {
+                super(...args)
+                this.warn = (...warnArgs: any[]) => mockWarn(...warnArgs)
+            }
+        }
+    }
+})
+
 const OWNER = randomEthereumAddress()
 const MODERATOR = randomEthereumAddress()
 const MEMBER = randomEthereumAddress()
@@ -75,6 +89,22 @@ describe('IngestValidator', () => {
             client.validateMessage.mockRejectedValue(new Error('RPC unavailable'))
             const verdict = await validator.validate(createStreamMessage())
             expect(verdict).toEqual({ store: true })
+        })
+
+        it('logs why validation could not complete, without the message', async () => {
+            const msg = createStreamMessage()
+            const err: any = new Error('Could not reach the StreamPermission Smart Contract')
+            err.code = 'UNKNOWN_ERROR'
+            err.streamMessage = msg
+            client.validateMessage.mockRejectedValue(err)
+            expect(await validator.validate(msg)).toEqual({ store: true })
+            const call = mockWarn.mock.calls.find(([text]) => text === 'Could not validate message, storing it')
+            expect(call?.[1]).toEqual({
+                streamId: msg.getStreamId(),
+                publisherId: msg.getPublisherId(),
+                code: 'UNKNOWN_ERROR',
+                reason: 'Could not reach the StreamPermission Smart Contract'
+            })
         })
     })
 

@@ -46,10 +46,12 @@ export class IngestValidator {
             if (DEFINITIVE_REJECTIONS.has(err?.code)) {
                 return this.reject(msg, err.code, this.signerOf(msg))
             }
+            // Never log err itself: the SDK attaches the whole message, payload included.
             logger.warn('Could not validate message, storing it', {
                 streamId: msg.getStreamId(),
                 publisherId: msg.getPublisherId(),
-                err
+                code: err?.code,
+                reason: err?.message
             })
             return { store: true }
         }
