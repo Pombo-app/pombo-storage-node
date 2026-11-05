@@ -73,10 +73,22 @@ const createHandler = (storage: Storage, gates: PomboGates, client: StreamrClien
             logger.warn('Could not verify access, answering for a stream last seen as public', { streamId, err })
             canRead = true
         }
+        const keys = await storage.getRowKeys(streamId, partition, targets.map((target) => target.timestamp))
         const results: (PurgeTarget & { result: StoredResult })[] = []
         for (const target of targets) {
-            const rows = await storage.getMessages(streamId, partition, target.timestamp, target.sequenceNumber)
-            const present = (rows.length > 0) && (canRead || signedBy(client, rows, signer))
+            const publishers = keys
+                .filter((key) => (key.timestamp === target.timestamp) && (key.sequenceNo === target.sequenceNumber))
+                .map((key) => key.publisherId.toLowerCase())
+            let present = false
+            if (publishers.length > 0) {
+                // Ingest verifies an EOA signature against publisher_id before storing the row.
+                if (canRead || publishers.every((publisher) => publisher === signer.toLowerCase())) {
+                    present = true
+                } else {
+                    const rows = await storage.getMessages(streamId, partition, target.timestamp, target.sequenceNumber)
+                    present = signedBy(client, rows, signer)
+                }
+            }
             results.push({ ...target, result: present ? 'present' : 'absent' })
         }
         logger.info('Stored check', { streamId, partition, signer, canRead, targets: targets.length })
