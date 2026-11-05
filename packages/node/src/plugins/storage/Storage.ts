@@ -9,7 +9,7 @@ import { BatchManager } from './BatchManager'
 import { Bucket, BucketId } from './Bucket'
 import { BucketManager, BucketManagerOptions } from './BucketManager'
 import { LoadBalancingPolicyFactory } from './localHostPolicy'
-import { StoredMessage, StoredRow } from './StoredMessage'
+import { StoredMessage, StoredRow, StoredRowKey } from './StoredMessage'
 import { MAX_SEQUENCE_NUMBER_VALUE, MIN_SEQUENCE_NUMBER_VALUE } from './dataQueryEndpoint'
 
 const logger = new Logger('Storage')
@@ -268,6 +268,29 @@ export class Storage extends EventEmitter {
             msgChainId: row.msg_chain_id,
             payload: row.payload,
             storedAt: (row.stored_at !== null && row.stored_at !== undefined) ? new Date(row.stored_at).getTime() : undefined
+        }))
+    }
+
+    /** The keys of the rows at any of the timestamps, in one bucket lookup and one query, without the payloads. */
+    async getRowKeys(streamId: string, partition: number, timestamps: number[]): Promise<StoredRowKey[]> {
+        if (timestamps.length === 0) {
+            return []
+        }
+        const from = Math.min(...timestamps)
+        const to = Math.max(...timestamps)
+        const buckets = await this.bucketManager.getBucketsByTimestamp(streamId, partition, from - BUCKET_LOOKBACK_MS, to)
+        if (buckets.length === 0) {
+            return []
+        }
+        const query = 'SELECT ts, sequence_no, publisher_id FROM stream_data '
+            + 'WHERE stream_id = ? AND partition = ? AND bucket_id IN ? AND ts IN ?'
+        const resultSet = await this.cassandraClient.execute(query, [streamId, partition, bucketsToIds(buckets), [...new Set(timestamps)]], {
+            prepare: true
+        })
+        return resultSet.rows.map((row) => ({
+            timestamp: new Date(row.ts).getTime(),
+            sequenceNo: row.sequence_no,
+            publisherId: row.publisher_id
         }))
     }
 

@@ -16,3 +16,6 @@ export interface StoredRow extends StoredMessage {
     publisherId: string
     msgChainId: string
 }
+
+/** The key of a stream_data row, read without its payload. */
+export type StoredRowKey = Pick<StoredRow, 'timestamp' | 'sequenceNo' | 'publisherId'>

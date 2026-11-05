@@ -8,7 +8,7 @@ import {
     convertStreamMessageToBytes
 } from '@streamr/sdk'
 import { randomEthereumAddress, randomUserId } from '@streamr/test-utils'
-import { EthereumAddress, hexToBinary, toEthereumAddress, toStreamID, utf8ToBinary } from '@streamr/utils'
+import { EthereumAddress, hexToBinary, toEthereumAddress, toStreamID, toUserId, utf8ToBinary } from '@streamr/utils'
 import { BaseWallet, Wallet } from 'ethers'
 import express from 'express'
 import { mock } from 'jest-mock-extended'
@@ -26,9 +26,9 @@ const PARTITION = 0
 const GATE = randomEthereumAddress()
 const OWNER = randomEthereumAddress()
 
-const createRow = (timestamp: number, sequenceNo: number): StoredRow => {
+const createRow = (timestamp: number, sequenceNo: number, publisherId = randomUserId()): StoredRow => {
     const msg = new StreamMessage({
-        messageId: new MessageID(STREAM_ID, PARTITION, timestamp, sequenceNo, randomUserId(), 'msgChainId'),
+        messageId: new MessageID(STREAM_ID, PARTITION, timestamp, sequenceNo, publisherId, 'msgChainId'),
         content: utf8ToBinary(JSON.stringify({ hello: 'world' })),
         signature: hexToBinary('0x1234'),
         contentType: ContentType.JSON,
@@ -91,6 +91,11 @@ describe('storedEndpoint', () => {
         storage.getMessages.mockImplementation(async (_streamId, _partition, timestamp, sequenceNumber) => {
             return rows[targetToLine({ timestamp, sequenceNumber })] ?? []
         })
+        storage.getRowKeys.mockImplementation(async (_streamId, _partition, timestamps) => {
+            return Object.values(rows).flat()
+                .filter((row) => timestamps.includes(row.timestamp))
+                .map(({ timestamp, sequenceNo, publisherId }) => ({ timestamp, sequenceNo, publisherId }))
+        })
         client.hasPermission.mockResolvedValue(false)   // not a reader by default
         client.getStreamMetadata.mockResolvedValue({ partitions: 1, description: JSON.stringify({ a: 'pombo', t: 'public' }) })   // no gate
         client.getMessageSigner.mockReturnValue(randomEthereumAddress())   // not the signer by default
@@ -133,6 +138,30 @@ describe('storedEndpoint', () => {
         const body = await signedBody([{ timestamp: 1000, sequenceNumber: 0 }])
         const res = await stored(body).expect(200)
         expect(res.body.results[0].result).toBe('present')
+    })
+
+    it('answers a non-reader from the row keys when it published the rows, without reading them', async () => {
+        rows[targetToLine({ timestamp: 2000, sequenceNumber: 0 })] = [createRow(2000, 0, toUserId(signer))]
+        const res = await stored(await signedBody([{ timestamp: 2000, sequenceNumber: 0 }, { timestamp: 9999, sequenceNumber: 0 }])).expect(200)
+        expect(res.body.results).toEqual([
+            { timestamp: 2000, sequenceNumber: 0, result: 'present' },
+            { timestamp: 9999, sequenceNumber: 0, result: 'absent' }
+        ])
+        expect(storage.getMessages).not.toHaveBeenCalled()
+        expect(storage.getRowKeys).toHaveBeenCalledTimes(1)
+    })
+
+    it('answers a reader from the row keys without reading the rows', async () => {
+        client.hasPermission.mockImplementation(async (query: any) => query.public === true)
+        const res = await stored(await signedBody([{ timestamp: 1000, sequenceNumber: 0 }])).expect(200)
+        expect(res.body.results[0].result).toBe('present')
+        expect(storage.getMessages).not.toHaveBeenCalled()
+    })
+
+    it('reads a row only when another id published it, to check who signed it', async () => {
+        await stored(await signedBody([{ timestamp: 1000, sequenceNumber: 0 }, { timestamp: 9999, sequenceNumber: 0 }])).expect(200)
+        expect(storage.getMessages).toHaveBeenCalledTimes(1)
+        expect(storage.getMessages).toHaveBeenCalledWith(STREAM_ID, PARTITION, 1000, 0)
     })
 
     it('is not an existence oracle: a non-reader who did not sign gets absent whether or not the row exists', async () => {
